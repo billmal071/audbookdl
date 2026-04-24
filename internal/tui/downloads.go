@@ -3,6 +3,7 @@ package tui
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -196,6 +197,15 @@ func (t *DownloadsTab) refresh() tea.Cmd {
 			if completedAt.Valid {
 				d.CompletedAt = &completedAt.Time
 			}
+
+			// Auto-clean: if completed but files deleted, remove from DB
+			if d.Status == db.StatusCompleted && d.BasePath != "" {
+				if _, err := os.Stat(d.BasePath); os.IsNotExist(err) {
+					t.db.Exec("DELETE FROM audiobook_downloads WHERE id = ?", d.ID)
+					continue
+				}
+			}
+
 			downloads = append(downloads, &d)
 		}
 		return refreshDownloadsMsg{downloads: downloads}

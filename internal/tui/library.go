@@ -219,6 +219,15 @@ func (t *LibraryTab) refresh() tea.Cmd {
 			if completedAt.Valid {
 				d.CompletedAt = &completedAt.Time
 			}
+
+			// Auto-clean: if files deleted from disk, remove from DB
+			if d.BasePath != "" {
+				if _, err := os.Stat(d.BasePath); os.IsNotExist(err) {
+					t.db.Exec("DELETE FROM audiobook_downloads WHERE id = ?", d.ID)
+					continue
+				}
+			}
+
 			downloads = append(downloads, &d)
 		}
 
