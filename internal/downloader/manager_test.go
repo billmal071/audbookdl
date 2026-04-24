@@ -157,22 +157,22 @@ func TestManager_BuildFilePath(t *testing.T) {
 		want    string
 	}{
 		{
-			author: "Jane Doe",
-			title:  "Great Book",
+			author:  "Jane Doe",
+			title:   "Great Book",
 			chapter: &source.Chapter{Index: 1, Title: "Introduction", Format: "mp3"},
-			want:   "/downloads/Jane Doe/Great Book/01 - Introduction.mp3",
+			want:    "/downloads/Jane Doe/Great Book/01 - Introduction.mp3",
 		},
 		{
-			author: "Author",
-			title:  "Series Part 2",
+			author:  "Author",
+			title:   "Series Part 2",
 			chapter: &source.Chapter{Index: 10, Title: "Finale", Format: "m4b"},
-			want:   "/downloads/Author/Series Part 2/10 - Finale.m4b",
+			want:    "/downloads/Author/Series Part 2/10 - Finale.m4b",
 		},
 		{
-			author: "A",
-			title:  "T",
+			author:  "A",
+			title:   "T",
 			chapter: &source.Chapter{Index: 3, Title: "Ch", Format: "ogg"},
-			want:   "/downloads/A/T/03 - Ch.ogg",
+			want:    "/downloads/A/T/03 - Ch.ogg",
 		},
 	}
 

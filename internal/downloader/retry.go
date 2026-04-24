@@ -19,8 +19,12 @@ func DefaultRetryConfig() RetryConfig {
 
 func CalculateBackoff(attempt int, cfg RetryConfig) time.Duration {
 	delay := float64(cfg.BaseDelay)
-	for i := 0; i < attempt; i++ { delay *= cfg.Multiplier }
-	if delay > float64(cfg.MaxDelay) { delay = float64(cfg.MaxDelay) }
+	for i := 0; i < attempt; i++ {
+		delay *= cfg.Multiplier
+	}
+	if delay > float64(cfg.MaxDelay) {
+		delay = float64(cfg.MaxDelay)
+	}
 	jitter := delay * 0.25 * (rand.Float64()*2 - 1)
 	delay += jitter
 	return time.Duration(delay)
@@ -35,7 +39,9 @@ func RetryOperation(ctx context.Context, cfg RetryConfig, fn func() error) error
 		default:
 		}
 		lastErr = fn()
-		if lastErr == nil { return nil }
+		if lastErr == nil {
+			return nil
+		}
 		if attempt < cfg.MaxAttempts-1 {
 			backoff := CalculateBackoff(attempt, cfg)
 			select {

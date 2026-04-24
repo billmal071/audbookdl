@@ -20,7 +20,9 @@ func New(sources ...source.Source) *Searcher {
 // Search queries all sources concurrently. Returns partial results if some fail.
 // Returns error only if ALL sources fail.
 func (s *Searcher) Search(ctx context.Context, query string, opts source.SearchOptions) ([]*source.Audiobook, error) {
-	if len(s.sources) == 0 { return nil, nil }
+	if len(s.sources) == 0 {
+		return nil, nil
+	}
 
 	type result struct {
 		books []*source.Audiobook

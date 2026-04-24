@@ -96,7 +96,7 @@ func (b *apiBook) toAudiobook() *source.Audiobook {
 		ID: b.ID, Title: b.Title, Author: author, Narrator: narrator,
 		Description: b.Description, Language: b.Language, Year: b.CopyrightYear,
 		Duration: time.Duration(b.TotalTimeSecs) * time.Second,
-		PageURL: b.URLLibrivox, Format: "mp3", ChapterCount: numSections, Source: "librivox",
+		PageURL:  b.URLLibrivox, Format: "mp3", ChapterCount: numSections, Source: "librivox",
 	}
 }
 

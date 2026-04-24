@@ -109,4 +109,3 @@ func decodeAPIResponse(body []byte) (*apiResponse, error) {
 	}
 	return &resp, nil
 }
-

@@ -20,8 +20,12 @@ type Client struct {
 }
 
 func NewClient(baseURL, iaBaseURL string, http *httpclient.Client) *Client {
-	if baseURL == "" { baseURL = "https://openlibrary.org" }
-	if iaBaseURL == "" { iaBaseURL = "https://archive.org" }
+	if baseURL == "" {
+		baseURL = "https://openlibrary.org"
+	}
+	if iaBaseURL == "" {
+		iaBaseURL = "https://archive.org"
+	}
 	return &Client{baseURL: baseURL, iaBaseURL: iaBaseURL, http: http}
 }
 
@@ -33,7 +37,9 @@ func (c *Client) Search(ctx context.Context, query string, opts source.SearchOpt
 	}
 	books := make([]*source.Audiobook, 0, len(resp.Docs))
 	for _, d := range resp.Docs {
-		if len(d.IA) > 0 { books = append(books, d.toAudiobook()) }
+		if len(d.IA) > 0 {
+			books = append(books, d.toAudiobook())
+		}
 	}
 	return books, nil
 }
@@ -55,7 +61,9 @@ func (c *Client) GetChapters(ctx context.Context, bookID string) ([]*source.Chap
 	sort.Slice(chapters, func(i, j int) bool {
 		return strings.ToLower(chapters[i].DownloadURL) < strings.ToLower(chapters[j].DownloadURL)
 	})
-	for i := range chapters { chapters[i].Index = i + 1 }
+	for i := range chapters {
+		chapters[i].Index = i + 1
+	}
 	return chapters, nil
 }
 
@@ -63,8 +71,10 @@ func (c *Client) Name() string { return "openlibrary" }
 
 // IA metadata types (local to avoid circular dep with archive package)
 type iaMetadataResponse struct {
-	Metadata struct { Identifier string `json:"identifier"` } `json:"metadata"`
-	Files    []iaFileInfo `json:"files"`
+	Metadata struct {
+		Identifier string `json:"identifier"`
+	} `json:"metadata"`
+	Files []iaFileInfo `json:"files"`
 }
 
 type iaFileInfo struct {
@@ -84,11 +94,13 @@ func (f *iaFileInfo) toChapter(identifier string, index int) *source.Chapter {
 	size, _ := strconv.ParseInt(f.Size, 10, 64)
 	lengthSec, _ := strconv.ParseFloat(f.Length, 64)
 	title := f.Title
-	if title == "" { title = strings.TrimSuffix(f.Name, ".mp3") }
+	if title == "" {
+		title = strings.TrimSuffix(f.Name, ".mp3")
+	}
 	return &source.Chapter{
 		Index: index, Title: title,
-		Duration: time.Duration(math.Round(lengthSec)) * time.Second,
+		Duration:    time.Duration(math.Round(lengthSec)) * time.Second,
 		DownloadURL: fmt.Sprintf("https://archive.org/download/%s/%s", identifier, f.Name),
-		Format: "mp3", FileSize: size,
+		Format:      "mp3", FileSize: size,
 	}
 }

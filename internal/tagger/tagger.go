@@ -6,9 +6,9 @@ import (
 	"os"
 	"path/filepath"
 
-	id3 "github.com/bogem/id3v2/v2"
 	"github.com/billmal071/audbookdl/internal/httpclient"
 	"github.com/billmal071/audbookdl/internal/source"
+	id3 "github.com/bogem/id3v2/v2"
 )
 
 // TagResult contains the result of tagging an audiobook.
