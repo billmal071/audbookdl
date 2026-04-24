@@ -10,6 +10,8 @@ import (
 	"github.com/billmal071/audbookdl/internal/source"
 )
 
+// ── fixtures ──────────────────────────────────────────────────────────────────
+
 const fixtureJSON = `{
   "books": [{
     "id": "1234",
@@ -29,6 +31,29 @@ const fixtureJSON = `{
   }]
 }`
 
+const fixtureRSS = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+<channel>
+<title>The Adventures of Sherlock Holmes</title>
+<item>
+  <title>01 - A Scandal in Bohemia</title>
+  <itunes:episode>1</itunes:episode>
+  <itunes:duration>00:32:15</itunes:duration>
+  <enclosure url="https://archive.org/download/adventures_holmes/ch01.mp3" length="0" type="audio/mpeg"/>
+</item>
+<item>
+  <title>02 - The Red-Headed League</title>
+  <itunes:episode>2</itunes:episode>
+  <itunes:duration>00:28:40</itunes:duration>
+  <enclosure url="https://archive.org/download/adventures_holmes/ch02.mp3" length="0" type="audio/mpeg"/>
+</item>
+</channel>
+</rss>`
+
+const fixtureAPIError = `{"error": "no audiobooks were found"}`
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
 func newTestServer(t *testing.T, body string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -37,6 +62,15 @@ func newTestServer(t *testing.T, body string) *httptest.Server {
 		_, _ = w.Write([]byte(body))
 	}))
 }
+
+// newMuxServer creates a test server that dispatches by path prefix so we can
+// serve the RSS feed and the API from the same host.
+func newMuxServer(t *testing.T, mux *http.ServeMux) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(mux)
+}
+
+// ── tests ─────────────────────────────────────────────────────────────────────
 
 func TestSearch(t *testing.T) {
 	srv := newTestServer(t, fixtureJSON)
@@ -66,6 +100,20 @@ func TestSearch(t *testing.T) {
 	}
 }
 
+func TestSearch_APIError(t *testing.T) {
+	srv := newTestServer(t, fixtureAPIError)
+	defer srv.Close()
+
+	client := NewClient(srv.URL, httpclient.New())
+	books, err := client.Search(context.Background(), "zzznomatch", source.SearchOptions{})
+	if err != nil {
+		t.Fatalf("Search with API error should not return a Go error, got: %v", err)
+	}
+	if books != nil {
+		t.Errorf("expected nil books slice for API error, got %v", books)
+	}
+}
+
 func TestGetChapters(t *testing.T) {
 	srv := newTestServer(t, fixtureJSON)
 	defer srv.Close()
@@ -88,6 +136,54 @@ func TestGetChapters(t *testing.T) {
 	}
 	if ch.Format != "mp3" {
 		t.Errorf("chapter format: got %q, want %q", ch.Format, "mp3")
+	}
+}
+
+func TestGetChapters_RSS(t *testing.T) {
+	mux := http.NewServeMux()
+	// Serve the RSS feed on /rss/1234
+	mux.HandleFunc("/rss/1234", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		_, _ = w.Write([]byte(fixtureRSS))
+	})
+	// Return an empty JSON if the API fallback is hit (should not be needed).
+	mux.HandleFunc("/api/feed/audiobooks/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"books":[]}`))
+	})
+
+	srv := newMuxServer(t, mux)
+	defer srv.Close()
+
+	client := NewClient(srv.URL, httpclient.New())
+	chapters, err := client.GetChapters(context.Background(), "1234")
+	if err != nil {
+		t.Fatalf("GetChapters_RSS returned error: %v", err)
+	}
+	if len(chapters) != 2 {
+		t.Fatalf("expected 2 chapters from RSS, got %d", len(chapters))
+	}
+
+	ch := chapters[0]
+	if ch.Title != "01 - A Scandal in Bohemia" {
+		t.Errorf("RSS chapter title: got %q, want %q", ch.Title, "01 - A Scandal in Bohemia")
+	}
+	if ch.Index != 1 {
+		t.Errorf("RSS chapter index: got %d, want %d", ch.Index, 1)
+	}
+	if ch.DownloadURL != "https://archive.org/download/adventures_holmes/ch01.mp3" {
+		t.Errorf("RSS chapter URL: got %q", ch.DownloadURL)
+	}
+	if ch.Format != "mp3" {
+		t.Errorf("RSS chapter format: got %q, want %q", ch.Format, "mp3")
+	}
+
+	ch2 := chapters[1]
+	if ch2.Title != "02 - The Red-Headed League" {
+		t.Errorf("RSS chapter 2 title: got %q", ch2.Title)
+	}
+	if ch2.Index != 2 {
+		t.Errorf("RSS chapter 2 index: got %d, want %d", ch2.Index, 2)
 	}
 }
 

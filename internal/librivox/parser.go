@@ -1,7 +1,9 @@
 package librivox
 
 import (
+	"encoding/xml"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -9,43 +11,74 @@ import (
 	"github.com/billmal071/audbookdl/internal/source"
 )
 
+// ── JSON / API types ────────────────────────────────────────────────────────
+
 type apiResponse struct {
-	Books []apiBook `json:"books"`
+	Books []apiBook `json:"books" xml:"book"`
 }
 
 type apiBook struct {
-	ID            string       `json:"id"`
-	Title         string       `json:"title"`
-	Description   string       `json:"description"`
-	URLLibrivox   string       `json:"url_librivox"`
-	Language      string       `json:"language"`
-	CopyrightYear string       `json:"copyright_year"`
-	TotalTime     string       `json:"totaltime"`
-	TotalTimeSecs int          `json:"totaltimesecs"`
-	NumSections   string       `json:"num_sections"`
-	Authors       []apiAuthor  `json:"authors"`
-	Sections      []apiSection `json:"sections"`
+	ID            string       `json:"id"            xml:"id"`
+	Title         string       `json:"title"         xml:"title"`
+	Description   string       `json:"description"   xml:"description"`
+	URLLibrivox   string       `json:"url_librivox"  xml:"url_librivox"`
+	Language      string       `json:"language"      xml:"language"`
+	CopyrightYear string       `json:"copyright_year" xml:"copyright_year"`
+	TotalTime     string       `json:"totaltime"     xml:"totaltime"`
+	TotalTimeSecs int          `json:"totaltimesecs" xml:"totaltimesecs"`
+	NumSections   string       `json:"num_sections"  xml:"num_sections"`
+	Authors       []apiAuthor  `json:"authors"       xml:"authors>author"`
+	Sections      []apiSection `json:"sections"      xml:"sections>section"`
 }
 
 type apiAuthor struct {
-	ID        string `json:"id"`
-	FirstName string `json:"first_name"`
-	LastName  string `json:"last_name"`
+	ID        string `json:"id"         xml:"id"`
+	FirstName string `json:"first_name" xml:"first_name"`
+	LastName  string `json:"last_name"  xml:"last_name"`
 }
 
 type apiSection struct {
-	ID            string      `json:"id"`
-	SectionNumber string      `json:"section_number"`
-	Title         string      `json:"title"`
-	ListenURL     string      `json:"listen_url"`
-	Language      string      `json:"language"`
-	PlayTime      string      `json:"playtime"`
-	Readers       []apiReader `json:"readers"`
+	ID            string      `json:"id"             xml:"id"`
+	SectionNumber string      `json:"section_number" xml:"section_number"`
+	Title         string      `json:"title"          xml:"title"`
+	ListenURL     string      `json:"listen_url"     xml:"listen_url"`
+	Language      string      `json:"language"       xml:"language"`
+	PlayTime      string      `json:"playtime"       xml:"playtime"`
+	Readers       []apiReader `json:"readers"        xml:"readers>reader"`
 }
 
 type apiReader struct {
-	DisplayName string `json:"display_name"`
+	DisplayName string `json:"display_name" xml:"display_name"`
 }
+
+// apiErrorResponse is used to detect error messages returned in JSON/XML bodies.
+type apiErrorResponse struct {
+	Error string `json:"error" xml:"error"`
+}
+
+// ── RSS types ───────────────────────────────────────────────────────────────
+
+type rssResponse struct {
+	Channel rssChannel `xml:"channel"`
+}
+
+type rssChannel struct {
+	Items []rssItem `xml:"item"`
+}
+
+type rssItem struct {
+	Title     string       `xml:"title"`
+	Episode   string       `xml:"http://www.itunes.com/dtds/podcast-1.0.dtd episode"`
+	Duration  string       `xml:"http://www.itunes.com/dtds/podcast-1.0.dtd duration"`
+	Enclosure rssEnclosure `xml:"enclosure"`
+}
+
+type rssEnclosure struct {
+	URL  string `xml:"url,attr"`
+	Type string `xml:"type,attr"`
+}
+
+// ── Conversions ─────────────────────────────────────────────────────────────
 
 func (b *apiBook) toAudiobook() *source.Audiobook {
 	author := ""
@@ -74,6 +107,64 @@ func (s *apiSection) toChapter() *source.Chapter {
 	}
 }
 
+// ── RSS parsing ─────────────────────────────────────────────────────────────
+
+// parseRSS parses a LibriVox RSS feed body and returns chapters.
+func parseRSS(body []byte) []*source.Chapter {
+	var feed rssResponse
+	if err := xml.Unmarshal(body, &feed); err != nil {
+		return nil
+	}
+	chapters := make([]*source.Chapter, 0, len(feed.Channel.Items))
+	for i, item := range feed.Channel.Items {
+		if item.Enclosure.URL == "" {
+			continue
+		}
+		idx := i + 1
+		if ep, err := strconv.Atoi(item.Episode); err == nil && ep > 0 {
+			idx = ep
+		}
+		chapters = append(chapters, &source.Chapter{
+			Index:       idx,
+			Title:       item.Title,
+			Duration:    parsePlaytime(item.Duration),
+			DownloadURL: item.Enclosure.URL,
+			Format:      "mp3",
+		})
+	}
+	return chapters
+}
+
+// ── URL builders ─────────────────────────────────────────────────────────────
+
+func buildSearchURL(baseURL, query string, opts source.SearchOptions) string {
+	limit := opts.Limit
+	if limit == 0 {
+		limit = 10
+	}
+	u := fmt.Sprintf(
+		"%s/api/feed/audiobooks/?title=%s&format=json&extended=1&limit=%d",
+		baseURL, url.QueryEscape(query), limit,
+	)
+	if opts.Author != "" {
+		u += "&author=" + url.QueryEscape(opts.Author)
+	}
+	if opts.Page > 0 {
+		u += fmt.Sprintf("&offset=%d", opts.Page*limit)
+	}
+	return u
+}
+
+func buildGetURL(baseURL, bookID string) string {
+	return fmt.Sprintf("%s/api/feed/audiobooks/?id=%s&format=json&extended=1", baseURL, url.QueryEscape(bookID))
+}
+
+func buildRSSURL(baseURL, bookID string) string {
+	return fmt.Sprintf("%s/rss/%s", baseURL, url.QueryEscape(bookID))
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
 func parsePlaytime(s string) time.Duration {
 	parts := strings.Split(s, ":")
 	if len(parts) != 3 {
@@ -83,23 +174,4 @@ func parsePlaytime(s string) time.Duration {
 	m, _ := strconv.Atoi(parts[1])
 	sec, _ := strconv.Atoi(parts[2])
 	return time.Duration(h)*time.Hour + time.Duration(m)*time.Minute + time.Duration(sec)*time.Second
-}
-
-func buildSearchURL(baseURL, query string, opts source.SearchOptions) string {
-	limit := opts.Limit
-	if limit == 0 {
-		limit = 10
-	}
-	url := fmt.Sprintf("%s/api/feed/audiobooks/?title=%s&format=json&extended=1&limit=%d", baseURL, query, limit)
-	if opts.Author != "" {
-		url += "&author=" + opts.Author
-	}
-	if opts.Page > 0 {
-		url += fmt.Sprintf("&offset=%d", opts.Page*limit)
-	}
-	return url
-}
-
-func buildGetURL(baseURL, bookID string) string {
-	return fmt.Sprintf("%s/api/feed/audiobooks/?id=%s&format=json&extended=1", baseURL, bookID)
 }
