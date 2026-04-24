@@ -56,11 +56,15 @@ type apiReader struct {
 // ── RSS types ───────────────────────────────────────────────────────────────
 
 type rssResponse struct {
+	XMLName xml.Name   `xml:"rss"`
 	Channel rssChannel `xml:"channel"`
 }
 
 type rssChannel struct {
-	Items []rssItem `xml:"item"`
+	Title    string    `xml:"title"`
+	Link     string    `xml:"link"`
+	ImageURL string    `xml:"http://www.itunes.com/dtds/podcast-1.0.dtd image"`
+	Items    []rssItem `xml:"item"`
 }
 
 type rssItem struct {
@@ -130,6 +134,43 @@ func parseRSS(body []byte) []*source.Chapter {
 		})
 	}
 	return chapters
+}
+
+// parseRSSMetadata extracts audiobook metadata from a LibriVox RSS feed.
+// RSS title format: "Title by Author Name (year - year)"
+func parseRSSMetadata(body []byte, bookID string) *source.Audiobook {
+	var feed rssResponse
+	if err := xml.Unmarshal(body, &feed); err != nil {
+		return nil
+	}
+
+	raw := feed.Channel.Title
+	if raw == "" {
+		return nil
+	}
+
+	// Parse "Christmas Carol, A by Charles Dickens (1812 - 1870)"
+	title := raw
+	author := ""
+	if idx := strings.Index(raw, " by "); idx >= 0 {
+		title = strings.TrimSpace(raw[:idx])
+		rest := raw[idx+4:]
+		// Strip "(year - year)" suffix
+		if paren := strings.LastIndex(rest, "("); paren >= 0 {
+			author = strings.TrimSpace(rest[:paren])
+		} else {
+			author = strings.TrimSpace(rest)
+		}
+	}
+
+	return &source.Audiobook{
+		ID:      bookID,
+		Title:   title,
+		Author:  author,
+		PageURL: feed.Channel.Link,
+		Format:  "mp3",
+		Source:  "librivox",
+	}
 }
 
 // ── URL builders ─────────────────────────────────────────────────────────────
