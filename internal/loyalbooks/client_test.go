@@ -101,3 +101,102 @@ func TestName(t *testing.T) {
 		t.Errorf("expected name %q, got %q", "loyalbooks", name)
 	}
 }
+
+func TestSearch_FallbackSelectors(t *testing.T) {
+	// HTML without table.layout2-blue but with /book/ links in div-based layout
+	divHTML := `<html><body>
+<div class="results">
+  <div class="book-item">
+    <a href="/book/sherlock-holmes">Sherlock Holmes</a>
+    <a href="/author/doyle">Arthur Conan Doyle</a>
+  </div>
+  <div class="book-item">
+    <a href="/book/hound-of-baskervilles">The Hound of the Baskervilles</a>
+    <a href="/author/doyle">Arthur Conan Doyle</a>
+  </div>
+</div>
+</body></html>`
+
+	srv := newTestServer(divHTML, bookHTML)
+	defer srv.Close()
+
+	client := NewClient(srv.URL, httpclient.New())
+	books, err := client.Search(context.Background(), "sherlock", source.SearchOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("Search() error: %v", err)
+	}
+	if len(books) != 2 {
+		t.Fatalf("expected 2 books via strategy 2, got %d", len(books))
+	}
+	if books[0].Title != "Sherlock Holmes" {
+		t.Errorf("expected title %q, got %q", "Sherlock Holmes", books[0].Title)
+	}
+	if books[0].Author != "Arthur Conan Doyle" {
+		t.Errorf("expected author %q, got %q", "Arthur Conan Doyle", books[0].Author)
+	}
+}
+
+func TestSearch_GenericFallback(t *testing.T) {
+	// HTML without table.layout2-blue and without known div classes — generic /book/ links only
+	genericHTML := `<html><body>
+<ul>
+  <li><a href="/book/moby-dick">Moby Dick</a></li>
+  <li><a href="/book/war-and-peace">War and Peace</a></li>
+</ul>
+</body></html>`
+
+	srv := newTestServer(genericHTML, bookHTML)
+	defer srv.Close()
+
+	client := NewClient(srv.URL, httpclient.New())
+	books, err := client.Search(context.Background(), "moby", source.SearchOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("Search() error: %v", err)
+	}
+	if len(books) != 2 {
+		t.Fatalf("expected 2 books via generic strategy, got %d", len(books))
+	}
+	if books[0].Title != "Moby Dick" {
+		t.Errorf("expected title %q, got %q", "Moby Dick", books[0].Title)
+	}
+}
+
+func TestGetChapters_FallbackMP3Links(t *testing.T) {
+	// HTML without table.chapter-download but with bare .mp3 links
+	mp3HTML := `<html><body>
+<div>
+  <a href="https://archive.org/download/book/ch01.mp3">Chapter 1</a>
+  <a href="https://archive.org/download/book/ch02.mp3">Chapter 2</a>
+  <a href="https://archive.org/download/book/ch03.mp3">Chapter 3</a>
+</div>
+</body></html>`
+
+	srv := newTestServer(searchHTML, mp3HTML)
+	defer srv.Close()
+
+	client := NewClient(srv.URL, httpclient.New())
+	chapters, err := client.GetChapters(context.Background(), "some-book")
+	if err != nil {
+		t.Fatalf("GetChapters() error: %v", err)
+	}
+	if len(chapters) != 3 {
+		t.Fatalf("expected 3 chapters via MP3 link fallback, got %d", len(chapters))
+	}
+	if chapters[0].Title != "Chapter 1" {
+		t.Errorf("expected title %q, got %q", "Chapter 1", chapters[0].Title)
+	}
+	if chapters[1].Index != 2 {
+		t.Errorf("expected index 2, got %d", chapters[1].Index)
+	}
+	if chapters[2].DownloadURL != "https://archive.org/download/book/ch03.mp3" {
+		t.Errorf("unexpected download URL: %q", chapters[2].DownloadURL)
+	}
+}
+
+func TestBuildSearchURL_URLEncoding(t *testing.T) {
+	u := buildSearchURL("https://www.loyalbooks.com", "sherlock holmes & watson")
+	expected := "https://www.loyalbooks.com/search?q=sherlock+holmes+%26+watson"
+	if u != expected {
+		t.Errorf("expected URL %q, got %q", expected, u)
+	}
+}
