@@ -43,12 +43,14 @@ type Player struct {
 	positionMS    int64
 	speed         float64
 	volume        float64
-	sleepTimer    *time.Timer
-	sleepRemainMS int64
-	database      *sql.DB
-	saveTicker    *time.Ticker
-	stopChan      chan struct{}
-	engine        *Engine
+	sleepTimer     *time.Timer
+	sleepRemainMS  int64
+	playStartedAt time.Time // when current playback started (for elapsed tracking)
+	pausedPosition int64     // positionMS when paused
+	database       *sql.DB
+	saveTicker     *time.Ticker
+	stopChan       chan struct{}
+	engine         *Engine
 }
 
 // NewPlayer creates a new Player with sensible defaults.
@@ -91,6 +93,8 @@ func (p *Player) Play() {
 	defer p.mu.Unlock()
 
 	p.status = StatusPlaying
+	p.playStartedAt = time.Now()
+	p.pausedPosition = p.positionMS
 	p.startSaveLoop()
 
 	if p.playlist != nil {
@@ -111,7 +115,13 @@ func (p *Player) Pause() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	// Snapshot current position based on elapsed time
+	if p.status == StatusPlaying && !p.playStartedAt.IsZero() {
+		elapsed := time.Since(p.playStartedAt).Milliseconds()
+		p.positionMS = p.pausedPosition + int64(float64(elapsed)*p.speed)
+	}
 	p.status = StatusPaused
+	stopExternal()
 	if p.engine != nil && p.engine.IsPlaying() {
 		p.engine.PauseResume()
 	}
@@ -145,22 +155,51 @@ func (p *Player) NextChapter() {
 	if p.chapterIndex < last {
 		p.chapterIndex++
 		p.positionMS = 0
+		p.pausedPosition = 0
+		p.playStartedAt = time.Now()
+		// Start playing the new chapter
+		if p.status == StatusPlaying {
+			stopExternal()
+			ch := p.playlist.Chapters[p.chapterIndex]
+			playExternal(ch.FilePath)
+		}
 	}
 }
 
-// PrevChapter goes to the previous chapter unless positionMS > 3000ms,
+// PrevChapter goes to the previous chapter unless we're more than 3 seconds in,
 // in which case it restarts the current chapter.
 func (p *Player) PrevChapter() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if p.positionMS > 3000 {
+	// Compute live position
+	currentPos := p.positionMS
+	if p.status == StatusPlaying && !p.playStartedAt.IsZero() {
+		elapsed := time.Since(p.playStartedAt).Milliseconds()
+		currentPos = p.pausedPosition + int64(float64(elapsed)*p.speed)
+	}
+
+	if currentPos > 3000 {
 		p.positionMS = 0
+		p.pausedPosition = 0
+		p.playStartedAt = time.Now()
+		if p.status == StatusPlaying {
+			stopExternal()
+			ch := p.playlist.Chapters[p.chapterIndex]
+			playExternal(ch.FilePath)
+		}
 		return
 	}
 	if p.chapterIndex > 0 {
 		p.chapterIndex--
 		p.positionMS = 0
+		p.pausedPosition = 0
+		p.playStartedAt = time.Now()
+		if p.status == StatusPlaying {
+			stopExternal()
+			ch := p.playlist.Chapters[p.chapterIndex]
+			playExternal(ch.FilePath)
+		}
 	}
 }
 
@@ -248,13 +287,20 @@ func (p *Player) GetStatus() PlayerStatus {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
+	// Compute live position based on elapsed time since play started
+	posMS := p.positionMS
+	if p.status == StatusPlaying && !p.playStartedAt.IsZero() {
+		elapsed := time.Since(p.playStartedAt).Milliseconds()
+		posMS = p.pausedPosition + int64(float64(elapsed)*p.speed)
+	}
+
 	s := PlayerStatus{
 		Status:        p.status,
 		Speed:         p.speed,
 		Volume:        p.volume,
 		SleepRemainMS: p.sleepRemainMS,
 		ChapterIndex:  p.chapterIndex,
-		PositionMS:    p.positionMS,
+		PositionMS:    posMS,
 	}
 
 	if p.playlist != nil {
