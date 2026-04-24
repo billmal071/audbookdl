@@ -185,12 +185,16 @@ func (t *DownloadsTab) refresh() tea.Cmd {
 		var downloads []*db.AudiobookDownload
 		for rows.Next() {
 			var d db.AudiobookDownload
+			var completedAt sql.NullTime
 			if err := rows.Scan(
 				&d.ID, &d.AudiobookID, &d.Title, &d.Author, &d.Narrator,
 				&d.Source, &d.Status, &d.BasePath, &d.TotalSize, &d.DownloadedSize,
-				&d.CreatedAt, &d.UpdatedAt, &d.CompletedAt,
+				&d.CreatedAt, &d.UpdatedAt, &completedAt,
 			); err != nil {
 				continue
+			}
+			if completedAt.Valid {
+				d.CompletedAt = &completedAt.Time
 			}
 			downloads = append(downloads, &d)
 		}
