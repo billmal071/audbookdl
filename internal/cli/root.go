@@ -6,6 +6,7 @@ import (
 
 	"github.com/billmal071/audbookdl/internal/config"
 	"github.com/billmal071/audbookdl/internal/db"
+	"github.com/billmal071/audbookdl/internal/tui"
 	"github.com/spf13/cobra"
 )
 
@@ -33,6 +34,10 @@ Examples:
   audbookdl download <id>                   Download an audiobook
   audbookdl play <id>                       Play a downloaded audiobook
   audbookdl list                            List all downloads`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg := config.Get()
+		return tui.Run(db.DB(), cfg.Download.Directory)
+	},
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		if err := config.Init(cfgFile); err != nil {
 			return fmt.Errorf("failed to initialize config: %w", err)
