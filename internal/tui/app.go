@@ -90,6 +90,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Handle playAudiobookMsg from Library tab — load into player, switch to Player tab
+	if msg, ok := msg.(playAudiobookMsg); ok {
+		if pt, ok := a.tabs[3].(*PlayerTab); ok && pt.player != nil {
+			pt.player.Load(msg.playlist)
+			pt.player.Play()
+			a.activeTab = 3 // Switch to Player tab
+		}
+		return a, nil
+	}
+
 	// Forward all other messages to the active tab.
 	updated, cmd := a.tabs[a.activeTab].Update(msg)
 	a.tabs[a.activeTab] = updated.(Tab)

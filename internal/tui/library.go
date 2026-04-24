@@ -3,12 +3,16 @@ package tui
 import (
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/billmal071/audbookdl/internal/db"
+	"github.com/billmal071/audbookdl/internal/player"
 )
 
 // refreshLibraryMsg carries completed downloads and bookmarks from the DB.
@@ -16,6 +20,11 @@ type refreshLibraryMsg struct {
 	downloads []*db.AudiobookDownload
 	bookmarks []*db.Bookmark
 	err       error
+}
+
+// playAudiobookMsg tells the App to load a playlist into the player and switch to Player tab.
+type playAudiobookMsg struct {
+	playlist *player.Playlist
 }
 
 // LibraryTab shows completed downloads grouped by author and bookmarks.
@@ -39,6 +48,7 @@ func (t *LibraryTab) TabName() string { return "Library" }
 
 func (t *LibraryTab) ShortHelp() []key.Binding {
 	return []key.Binding{
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "play")),
 		key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 		key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
 		key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
@@ -60,6 +70,12 @@ func (t *LibraryTab) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "r":
 			return t, t.refresh()
+		case "enter":
+			// Play the selected completed download
+			if t.cursor < len(t.downloads) {
+				dl := t.downloads[t.cursor]
+				return t, t.buildPlaylist(dl)
+			}
 		case "up", "k":
 			if t.cursor > 0 {
 				t.cursor--
@@ -224,5 +240,51 @@ func (t *LibraryTab) refresh() tea.Cmd {
 		}
 
 		return refreshLibraryMsg{downloads: downloads, bookmarks: bookmarks}
+	}
+}
+
+// buildPlaylist scans the download's base_path for audio files and returns a playAudiobookMsg.
+func (t *LibraryTab) buildPlaylist(dl *db.AudiobookDownload) tea.Cmd {
+	return func() tea.Msg {
+		dir := dl.BasePath
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return refreshLibraryMsg{err: fmt.Errorf("read audiobook dir: %w", err)}
+		}
+
+		var chapters []player.ChapterInfo
+		idx := 1
+		// Sort entries by name for correct chapter order
+		sort.Slice(entries, func(i, j int) bool {
+			return entries[i].Name() < entries[j].Name()
+		})
+		for _, e := range entries {
+			name := e.Name()
+			ext := strings.ToLower(filepath.Ext(name))
+			if ext != ".mp3" && ext != ".m4b" && ext != ".m4a" && ext != ".ogg" {
+				continue
+			}
+			title := strings.TrimSuffix(name, ext)
+			chapters = append(chapters, player.ChapterInfo{
+				Index:    idx,
+				Title:    title,
+				FilePath: filepath.Join(dir, name),
+			})
+			idx++
+		}
+
+		if len(chapters) == 0 {
+			return refreshLibraryMsg{err: fmt.Errorf("no audio files found in %s", dir)}
+		}
+
+		return playAudiobookMsg{
+			playlist: &player.Playlist{
+				AudiobookID: dl.AudiobookID,
+				Title:       dl.Title,
+				Author:      dl.Author,
+				Narrator:    dl.Narrator,
+				Chapters:    chapters,
+			},
+		}
 	}
 }
