@@ -94,7 +94,7 @@ func buildSearchURL(baseURL, query string, opts source.SearchOptions) string {
 	if limit == 0 {
 		limit = 10
 	}
-	q := fmt.Sprintf("collection:(librivoxaudio OR audio_bookspoetry) AND (%s)", query)
+	q := fmt.Sprintf("title:(%s) AND collection:(librivoxaudio OR audio_bookspoetry)", query)
 	u := fmt.Sprintf("%s/advancedsearch.php?q=%s&output=json&rows=%d&fl[]=identifier,title,creator,description,date,downloads",
 		baseURL, url.QueryEscape(q), limit)
 	if opts.Page > 0 {

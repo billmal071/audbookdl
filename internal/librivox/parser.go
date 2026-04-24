@@ -14,7 +14,9 @@ import (
 // ── JSON / API types ────────────────────────────────────────────────────────
 
 type apiResponse struct {
-	Books []apiBook `json:"books" xml:"book"`
+	XMLName xml.Name  `json:"-" xml:"xml"`
+	Error   string    `json:"error" xml:"error"`
+	Books   []apiBook `json:"books" xml:"books>book"`
 }
 
 type apiBook struct {
@@ -49,11 +51,6 @@ type apiSection struct {
 
 type apiReader struct {
 	DisplayName string `json:"display_name" xml:"display_name"`
-}
-
-// apiErrorResponse is used to detect error messages returned in JSON/XML bodies.
-type apiErrorResponse struct {
-	Error string `json:"error" xml:"error"`
 }
 
 // ── RSS types ───────────────────────────────────────────────────────────────
@@ -142,12 +139,15 @@ func buildSearchURL(baseURL, query string, opts source.SearchOptions) string {
 	if limit == 0 {
 		limit = 10
 	}
-	u := fmt.Sprintf(
-		"%s/api/feed/audiobooks/?title=%s&format=json&extended=1&limit=%d",
-		baseURL, url.QueryEscape(query), limit,
-	)
+	// LibriVox API only supports XML. The `author=` param works reliably,
+	// while `title=` often returns errors. We use `author=` as the primary
+	// search and add `title=` as a secondary filter when an author filter is set.
+	u := fmt.Sprintf("%s/api/feed/audiobooks?author=%s&limit=%d",
+		baseURL, url.QueryEscape(query), limit)
 	if opts.Author != "" {
-		u += "&author=" + url.QueryEscape(opts.Author)
+		// If user explicitly set author filter, search by that and use query as title
+		u = fmt.Sprintf("%s/api/feed/audiobooks?author=%s&title=%s&limit=%d",
+			baseURL, url.QueryEscape(opts.Author), url.QueryEscape(query), limit)
 	}
 	if opts.Page > 0 {
 		u += fmt.Sprintf("&offset=%d", opts.Page*limit)
@@ -156,7 +156,7 @@ func buildSearchURL(baseURL, query string, opts source.SearchOptions) string {
 }
 
 func buildGetURL(baseURL, bookID string) string {
-	return fmt.Sprintf("%s/api/feed/audiobooks/?id=%s&format=json&extended=1", baseURL, url.QueryEscape(bookID))
+	return fmt.Sprintf("%s/api/feed/audiobooks?id=%s", baseURL, url.QueryEscape(bookID))
 }
 
 func buildRSSURL(baseURL, bookID string) string {

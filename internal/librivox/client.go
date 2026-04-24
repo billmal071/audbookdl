@@ -23,21 +23,14 @@ func NewClient(baseURL string, http *httpclient.Client) *Client {
 }
 
 func (c *Client) Search(ctx context.Context, query string, opts source.SearchOptions) ([]*source.Audiobook, error) {
-	url := buildSearchURL(c.baseURL, query, opts)
-	body, err := c.http.GetBody(ctx, url)
+	searchURL := buildSearchURL(c.baseURL, query, opts)
+	body, err := c.http.GetBody(ctx, searchURL)
 	if err != nil {
 		return nil, fmt.Errorf("librivox search: %w", err)
 	}
 
-	// Check for an API-level error embedded in the response body.
-	if apiErr := extractAPIError(body); apiErr != "" {
-		// Return empty results rather than a hard error — the API returns HTTP 200 for errors.
-		return nil, nil
-	}
-
 	resp, err := decodeAPIResponse(body)
-	if err != nil {
-		// Could not decode at all — return empty rather than crash.
+	if err != nil || resp.Error != "" {
 		return nil, nil
 	}
 
@@ -64,13 +57,9 @@ func (c *Client) GetChapters(ctx context.Context, bookID string) ([]*source.Chap
 		return nil, fmt.Errorf("librivox get chapters: %w", err)
 	}
 
-	if apiErr := extractAPIError(body); apiErr != "" {
-		return nil, fmt.Errorf("librivox: book %s not found (%s)", bookID, apiErr)
-	}
-
 	resp, err := decodeAPIResponse(body)
-	if err != nil {
-		return nil, fmt.Errorf("librivox get chapters: %w", err)
+	if err != nil || resp.Error != "" {
+		return nil, fmt.Errorf("librivox: book %s not found", bookID)
 	}
 	if len(resp.Books) == 0 {
 		return nil, fmt.Errorf("librivox: book %s not found", bookID)
@@ -101,15 +90,3 @@ func decodeAPIResponse(body []byte) (*apiResponse, error) {
 	return &resp, nil
 }
 
-// extractAPIError returns a non-empty string if the body encodes an API error.
-func extractAPIError(body []byte) string {
-	var errJSON apiErrorResponse
-	if err := json.Unmarshal(body, &errJSON); err == nil && errJSON.Error != "" {
-		return errJSON.Error
-	}
-	var errXML apiErrorResponse
-	if err := xml.Unmarshal(body, &errXML); err == nil && errXML.Error != "" {
-		return errXML.Error
-	}
-	return ""
-}
