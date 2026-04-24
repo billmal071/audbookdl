@@ -55,6 +55,15 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default $HOME/.config/audbookdl/config.yaml)")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(searchCmd)
+	rootCmd.AddCommand(downloadCmd)
+	rootCmd.AddCommand(listCmd)
+	rootCmd.AddCommand(pauseCmd)
+	rootCmd.AddCommand(resumeCmd)
+	rootCmd.AddCommand(bookmarkCmd)
+	rootCmd.AddCommand(historyCmd)
+	rootCmd.AddCommand(configCmd)
+	rootCmd.AddCommand(completionCmd)
 }
 
 func Verbose() bool { return verbose }
