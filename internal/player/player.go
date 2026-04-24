@@ -32,7 +32,9 @@ type PlayerStatus struct {
 }
 
 // Player manages playback state for an audiobook playlist.
-// Actual audio output is not handled here — this is the control and state layer.
+// Audio output is delegated to Engine, which handles MP3 decoding and speaker
+// integration. The engine field is optional: if NewEngine returns nil or audio
+// hardware is unavailable, the player operates as a state-only controller.
 type Player struct {
 	mu            sync.RWMutex
 	status        Status
@@ -46,6 +48,7 @@ type Player struct {
 	database      *sql.DB
 	saveTicker    *time.Ticker
 	stopChan      chan struct{}
+	engine        *Engine
 }
 
 // NewPlayer creates a new Player with sensible defaults.
@@ -56,6 +59,7 @@ func NewPlayer(database *sql.DB) *Player {
 		speed:    1.0,
 		volume:   0.8,
 		database: database,
+		engine:   NewEngine(),
 	}
 }
 
@@ -80,24 +84,39 @@ func (p *Player) Load(playlist *Playlist) {
 	}
 }
 
-// Play transitions the player to StatusPlaying and starts the periodic save goroutine.
+// Play transitions the player to StatusPlaying, starts the periodic save goroutine,
+// and delegates audio output to the engine.
 func (p *Player) Play() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	p.status = StatusPlaying
 	p.startSaveLoop()
+
+	if p.engine != nil && p.playlist != nil {
+		idx := p.chapterIndex
+		if idx >= 0 && idx < len(p.playlist.Chapters) {
+			ch := p.playlist.Chapters[idx]
+			// Errors are intentionally ignored: the player degrades to state-only
+			// mode if the audio file is missing or the speaker is unavailable.
+			_ = p.engine.PlayFile(ch.FilePath, p.positionMS)
+		}
+	}
 }
 
-// Pause transitions the player to StatusPaused.
+// Pause transitions the player to StatusPaused and pauses audio output.
 func (p *Player) Pause() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	p.status = StatusPaused
+	if p.engine != nil && p.engine.IsPlaying() {
+		p.engine.PauseResume()
+	}
 }
 
-// Stop halts playback, stops the save ticker, and persists the final state.
+// Stop halts playback, stops the save ticker, persists the final state, and
+// releases engine resources.
 func (p *Player) Stop() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -105,6 +124,9 @@ func (p *Player) Stop() {
 	p.status = StatusStopped
 	p.stopSaveLoop()
 	p.saveState()
+	if p.engine != nil {
+		p.engine.Stop()
+	}
 }
 
 // NextChapter advances to the next chapter, capped at the last chapter.
@@ -159,7 +181,7 @@ func (p *Player) SkipBackward(d time.Duration) {
 	}
 }
 
-// SetSpeed sets the playback speed, clamped to [0.5, 3.0].
+// SetSpeed sets the playback speed, clamped to [0.5, 3.0], and updates the engine.
 func (p *Player) SetSpeed(speed float64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -170,9 +192,12 @@ func (p *Player) SetSpeed(speed float64) {
 		speed = 3.0
 	}
 	p.speed = speed
+	if p.engine != nil {
+		p.engine.SetSpeed(speed)
+	}
 }
 
-// SetVolume sets the playback volume, clamped to [0.0, 1.0].
+// SetVolume sets the playback volume, clamped to [0.0, 1.0], and updates the engine.
 func (p *Player) SetVolume(vol float64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -183,6 +208,9 @@ func (p *Player) SetVolume(vol float64) {
 		vol = 1.0
 	}
 	p.volume = vol
+	if p.engine != nil {
+		p.engine.SetVolume(vol)
+	}
 }
 
 // SetSleepTimer schedules a Pause after duration d.
