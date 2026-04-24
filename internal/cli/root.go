@@ -69,6 +69,8 @@ func init() {
 	rootCmd.AddCommand(historyCmd)
 	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(completionCmd)
+	rootCmd.AddCommand(queueCmd)
+	rootCmd.AddCommand(playCmd)
 }
 
 func Verbose() bool { return verbose }
