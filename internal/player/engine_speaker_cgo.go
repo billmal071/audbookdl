@@ -41,3 +41,9 @@ func speakerLock() {
 func speakerUnlock() {
 	speaker.Unlock()
 }
+
+// playExternal is a no-op on CGO builds (beep speaker handles audio).
+func playExternal(filePath string) error { return nil }
+
+// stopExternal is a no-op on CGO builds.
+func stopExternal() {}

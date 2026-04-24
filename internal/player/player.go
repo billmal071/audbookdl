@@ -93,13 +93,15 @@ func (p *Player) Play() {
 	p.status = StatusPlaying
 	p.startSaveLoop()
 
-	if p.engine != nil && p.playlist != nil {
+	if p.playlist != nil {
 		idx := p.chapterIndex
 		if idx >= 0 && idx < len(p.playlist.Chapters) {
 			ch := p.playlist.Chapters[idx]
-			// Errors are intentionally ignored: the player degrades to state-only
-			// mode if the audio file is missing or the speaker is unavailable.
-			_ = p.engine.PlayFile(ch.FilePath, p.positionMS)
+			if p.engine != nil {
+				_ = p.engine.PlayFile(ch.FilePath, p.positionMS)
+			}
+			// On non-CGO builds, use external player (mpv/ffplay)
+			playExternal(ch.FilePath)
 		}
 	}
 }
@@ -127,6 +129,7 @@ func (p *Player) Stop() {
 	if p.engine != nil {
 		p.engine.Stop()
 	}
+	stopExternal()
 }
 
 // NextChapter advances to the next chapter, capped at the last chapter.
