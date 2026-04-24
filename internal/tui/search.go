@@ -49,6 +49,8 @@ type SearchTab struct {
 	spinner      spinner.Model
 	results      []*source.Audiobook
 	cursor       int
+	page         int
+	lastQuery    string
 	loading      bool
 	err          error
 	width        int
@@ -87,9 +89,11 @@ func (t *SearchTab) ShortHelp() []key.Binding {
 		}
 	}
 	return []key.Binding{
-		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "search / view detail")),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "search / view")),
 		key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
 		key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+		key.NewBinding(key.WithKeys("]"), key.WithHelp("]", "next page")),
+		key.NewBinding(key.WithKeys("["), key.WithHelp("[", "prev page")),
 	}
 }
 
@@ -141,7 +145,9 @@ func (t *SearchTab) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				t.err = nil
 				t.results = nil
 				t.cursor = 0
-				return t, tea.Batch(t.spinner.Tick, doSearch(query))
+				t.page = 0
+				t.lastQuery = query
+				return t, tea.Batch(t.spinner.Tick, doSearch(query, 0))
 			}
 			// Otherwise open detail view for the selected result.
 			if len(t.results) > 0 {
@@ -149,6 +155,26 @@ func (t *SearchTab) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				t.showDetail = true
 				t.statusMsg = ""
 				return t, nil
+			}
+
+		case "]":
+			// Next page
+			if !t.textinput.Focused() && len(t.results) > 0 && t.lastQuery != "" {
+				t.page++
+				t.loading = true
+				t.err = nil
+				t.cursor = 0
+				return t, tea.Batch(t.spinner.Tick, doSearch(t.lastQuery, t.page))
+			}
+
+		case "[":
+			// Prev page
+			if !t.textinput.Focused() && t.page > 0 && t.lastQuery != "" {
+				t.page--
+				t.loading = true
+				t.err = nil
+				t.cursor = 0
+				return t, tea.Batch(t.spinner.Tick, doSearch(t.lastQuery, t.page))
 			}
 
 		case "up", "k":
@@ -164,7 +190,6 @@ func (t *SearchTab) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return t, nil
 
 		case "esc":
-			// Blur the input so arrow keys navigate the list.
 			if t.textinput.Focused() {
 				t.textinput.Blur()
 			} else {
@@ -357,7 +382,12 @@ func (t *SearchTab) View() string {
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString(fmt.Sprintf("\n  %d result(s)  |  enter to view detail", len(t.results)))
+	pageInfo := fmt.Sprintf("Page %d", t.page+1)
+	if t.page > 0 {
+		pageInfo = "[ prev  " + pageInfo
+	}
+	pageInfo += "  ] next"
+	sb.WriteString(fmt.Sprintf("\n  %d result(s)  ·  %s  ·  enter to view detail", len(t.results), pageInfo))
 
 	return sb.String()
 }
@@ -417,7 +447,7 @@ func (t *SearchTab) startDownload(book *source.Audiobook) tea.Cmd {
 }
 
 // doSearch executes the search in the background and returns a Cmd.
-func doSearch(query string) tea.Cmd {
+func doSearch(query string, page int) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -430,9 +460,9 @@ func doSearch(query string) tea.Cmd {
 		searcher := buildDefaultSearcher(hc)
 		limit := config.Get().Search.DefaultLimit
 		if limit > 5 {
-			limit = 5 // Cap TUI results to avoid overwhelming the screen
+			limit = 5
 		}
-		opts := source.SearchOptions{Limit: limit}
+		opts := source.SearchOptions{Limit: limit, Page: page}
 		books, err := searcher.Search(ctx, query, opts)
 		return searchResultMsg{books: books, err: err}
 	}

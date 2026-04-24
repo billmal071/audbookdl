@@ -21,6 +21,7 @@ import (
 
 var (
 	searchLimit    int
+	searchPage     int
 	searchSource   string
 	searchLanguage string
 	searchAuthor   string
@@ -36,6 +37,7 @@ var searchCmd = &cobra.Command{
 
 func init() {
 	searchCmd.Flags().IntVarP(&searchLimit, "limit", "n", 10, "number of results to return")
+	searchCmd.Flags().IntVarP(&searchPage, "page", "p", 0, "page number (0-indexed)")
 	searchCmd.Flags().StringVarP(&searchSource, "source", "s", "", "filter by source (librivox, archive, loyalbooks, openlibrary)")
 	searchCmd.Flags().StringVarP(&searchLanguage, "language", "l", "", "filter by language")
 	searchCmd.Flags().StringVarP(&searchAuthor, "author", "a", "", "filter by author")
@@ -55,6 +57,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	opts := source.SearchOptions{
 		Limit:    searchLimit,
+		Page:     searchPage,
 		Language: searchLanguage,
 		Author:   searchAuthor,
 		Format:   searchFormat,
