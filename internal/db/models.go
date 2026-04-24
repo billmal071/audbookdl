@@ -52,3 +52,35 @@ type Chunk struct {
 	Downloaded        int64
 	Status            DownloadStatus
 }
+
+// Bookmark maps to the bookmarks table.
+type Bookmark struct {
+	ID          int64
+	AudiobookID string
+	Title       string
+	Author      string
+	Narrator    string
+	Source      string
+	PageURL     string
+	Note        string
+	CreatedAt   time.Time
+}
+
+// PlaybackState maps to the playback_state table.
+type PlaybackState struct {
+	ID            int64
+	AudiobookID   string
+	ChapterIndex  int
+	PositionMS    int64
+	PlaybackSpeed float64
+	UpdatedAt     time.Time
+}
+
+// SearchHistoryEntry maps to the search_history table.
+type SearchHistoryEntry struct {
+	ID          int64
+	Query       string
+	Source      string
+	ResultCount int
+	CreatedAt   time.Time
+}
