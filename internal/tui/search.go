@@ -170,6 +170,10 @@ func (t *SearchTab) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		t.err = msg.err
 		t.results = msg.books
 		t.cursor = 0
+		// Blur input so enter/arrows navigate results
+		if len(msg.books) > 0 {
+			t.textinput.Blur()
+		}
 		return t, nil
 
 	case bookmarkSavedMsg:
