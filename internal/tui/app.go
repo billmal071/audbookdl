@@ -7,6 +7,8 @@ import (
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/billmal071/audbookdl/internal/player"
 )
 
 // Tab is the interface every TUI tab must satisfy.
@@ -31,12 +33,13 @@ type App struct {
 func NewApp(database *sql.DB, baseDir string) *App {
 	h := help.New()
 	h.ShowAll = false
+	p := player.NewPlayer(database)
 	return &App{
 		tabs: []Tab{
 			NewSearchTab(database),
 			NewDownloadsTab(database),
 			NewLibraryTab(database, baseDir),
-			NewPlayerTab(),
+			NewPlayerTab(p),
 		},
 		activeTab: 0,
 		help:      h,

@@ -118,20 +118,20 @@ func (t *DownloadsTab) View() string {
 			cursor = cursorStyle.Render("> ")
 		}
 
-		progress := ""
+		var pct float64
+		var barStr string
 		if dl.TotalSize > 0 {
-			pct := float64(dl.DownloadedSize) / float64(dl.TotalSize) * 100
-			progress = fmt.Sprintf(" %.0f%%", pct)
+			pct = float64(dl.DownloadedSize) / float64(dl.TotalSize) * 100
+			barStr = " " + progressBar(pct, 20) + fmt.Sprintf(" %.0f%%", pct)
 		}
 
 		statusIcon := renderStatus(dl.Status)
-		line := fmt.Sprintf("%s%s %s  %s%s%s",
+		line := fmt.Sprintf("%s%s %s  %s%s",
 			cursor,
 			statusIcon,
 			titleStyle.Render(dl.Title),
 			subtitleStyle.Render(dl.Author),
-			subtitleStyle.Render(progress),
-			"",
+			subtitleStyle.Render(barStr),
 		)
 		sb.WriteString(line + "\n")
 	}
@@ -139,6 +139,20 @@ func (t *DownloadsTab) View() string {
 	sb.WriteString(fmt.Sprintf("\n  %d download(s)  |  r to refresh", len(t.downloads)))
 
 	return sb.String()
+}
+
+// progressBar renders a text progress bar of the given width.
+// progress is in the range [0, 100].
+func progressBar(progress float64, width int) string {
+	if progress < 0 {
+		progress = 0
+	}
+	if progress > 100 {
+		progress = 100
+	}
+	filled := int(progress / 100 * float64(width))
+	empty := width - filled
+	return "[" + strings.Repeat("█", filled) + strings.Repeat("░", empty) + "]"
 }
 
 // refresh queries the DB for all downloads.

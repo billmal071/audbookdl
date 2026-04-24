@@ -14,6 +14,7 @@ import (
 
 	"github.com/billmal071/audbookdl/internal/archive"
 	"github.com/billmal071/audbookdl/internal/config"
+	"github.com/billmal071/audbookdl/internal/db"
 	"github.com/billmal071/audbookdl/internal/httpclient"
 	"github.com/billmal071/audbookdl/internal/librivox"
 	"github.com/billmal071/audbookdl/internal/loyalbooks"
@@ -28,17 +29,26 @@ type searchResultMsg struct {
 	err   error
 }
 
+// bookmarkSavedMsg signals that a bookmark was saved (or failed).
+type bookmarkSavedMsg struct {
+	title string
+	err   error
+}
+
 // SearchTab is the interactive search tab.
 type SearchTab struct {
-	db        *sql.DB
-	textinput textinput.Model
-	spinner   spinner.Model
-	results   []*source.Audiobook
-	cursor    int
-	loading   bool
-	err       error
-	width     int
-	height    int
+	db           *sql.DB
+	textinput    textinput.Model
+	spinner      spinner.Model
+	results      []*source.Audiobook
+	cursor       int
+	loading      bool
+	err          error
+	width        int
+	height       int
+	showDetail   bool
+	selectedBook *source.Audiobook
+	statusMsg    string
 }
 
 // NewSearchTab constructs a SearchTab.
@@ -62,8 +72,15 @@ func NewSearchTab(database *sql.DB) *SearchTab {
 func (t *SearchTab) TabName() string { return "Search" }
 
 func (t *SearchTab) ShortHelp() []key.Binding {
+	if t.showDetail {
+		return []key.Binding{
+			key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "download")),
+			key.NewBinding(key.WithKeys("b"), key.WithHelp("b", "bookmark")),
+			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+		}
+	}
 	return []key.Binding{
-		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "search")),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "search / view detail")),
 		key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
 		key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
 	}
@@ -81,21 +98,50 @@ func (t *SearchTab) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return t, nil
 
 	case tea.KeyMsg:
+		// --- Detail view keybindings ---
+		if t.showDetail {
+			switch msg.String() {
+			case "esc":
+				t.showDetail = false
+				t.selectedBook = nil
+				t.statusMsg = ""
+				return t, nil
+			case "d":
+				t.statusMsg = fmt.Sprintf("Download queued: %s", t.selectedBook.Title)
+				return t, nil
+			case "b":
+				book := t.selectedBook
+				return t, t.doBookmark(book)
+			}
+			return t, nil
+		}
+
 		if t.loading {
 			// Absorb keys while loading.
 			return t, t.spinner.Tick
 		}
+
 		switch msg.String() {
 		case "enter":
-			query := strings.TrimSpace(t.textinput.Value())
-			if query == "" {
+			// If textinput is focused and has content, run search.
+			if t.textinput.Focused() {
+				query := strings.TrimSpace(t.textinput.Value())
+				if query == "" {
+					return t, nil
+				}
+				t.loading = true
+				t.err = nil
+				t.results = nil
+				t.cursor = 0
+				return t, tea.Batch(t.spinner.Tick, doSearch(query))
+			}
+			// Otherwise open detail view for the selected result.
+			if len(t.results) > 0 {
+				t.selectedBook = t.results[t.cursor]
+				t.showDetail = true
+				t.statusMsg = ""
 				return t, nil
 			}
-			t.loading = true
-			t.err = nil
-			t.results = nil
-			t.cursor = 0
-			return t, tea.Batch(t.spinner.Tick, doSearch(query))
 
 		case "up", "k":
 			if t.cursor > 0 {
@@ -108,6 +154,15 @@ func (t *SearchTab) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				t.cursor++
 			}
 			return t, nil
+
+		case "esc":
+			// Blur the input so arrow keys navigate the list.
+			if t.textinput.Focused() {
+				t.textinput.Blur()
+			} else {
+				t.textinput.Focus()
+			}
+			return t, nil
 		}
 
 	case searchResultMsg:
@@ -115,6 +170,14 @@ func (t *SearchTab) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		t.err = msg.err
 		t.results = msg.books
 		t.cursor = 0
+		return t, nil
+
+	case bookmarkSavedMsg:
+		if msg.err != nil {
+			t.statusMsg = "Bookmark failed: " + msg.err.Error()
+		} else {
+			t.statusMsg = "Bookmarked: " + msg.title
+		}
 		return t, nil
 
 	case spinner.TickMsg:
@@ -133,6 +196,78 @@ func (t *SearchTab) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (t *SearchTab) View() string {
 	var sb strings.Builder
 
+	// --- Detail view ---
+	if t.showDetail && t.selectedBook != nil {
+		book := t.selectedBook
+		sb.WriteString("\n")
+		sb.WriteString(titleStyle.Render("  " + book.Title))
+		sb.WriteString("\n\n")
+
+		if book.Author != "" {
+			sb.WriteString(fmt.Sprintf("  %s  %s\n",
+				subtitleStyle.Render("Author:"),
+				titleStyle.Render(book.Author),
+			))
+		}
+		if book.Narrator != "" {
+			sb.WriteString(fmt.Sprintf("  %s  %s\n",
+				subtitleStyle.Render("Narrator:"),
+				titleStyle.Render(book.Narrator),
+			))
+		}
+		if book.Duration > 0 {
+			sb.WriteString(fmt.Sprintf("  %s  %s\n",
+				subtitleStyle.Render("Duration:"),
+				titleStyle.Render(book.DurationFormatted()),
+			))
+		}
+		if book.ChapterCount > 0 {
+			sb.WriteString(fmt.Sprintf("  %s  %s\n",
+				subtitleStyle.Render("Chapters:"),
+				titleStyle.Render(fmt.Sprintf("%d", book.ChapterCount)),
+			))
+		}
+		if book.Format != "" {
+			sb.WriteString(fmt.Sprintf("  %s  %s\n",
+				subtitleStyle.Render("Format:"),
+				titleStyle.Render(book.Format),
+			))
+		}
+		if book.Source != "" {
+			sb.WriteString(fmt.Sprintf("  %s  %s\n",
+				subtitleStyle.Render("Source:"),
+				sourceStyle.Render(book.Source),
+			))
+		}
+
+		if book.Description != "" {
+			sb.WriteString("\n")
+			sb.WriteString(subtitleStyle.Render("  Description:"))
+			sb.WriteString("\n")
+			// Wrap description to width.
+			desc := book.Description
+			maxWidth := t.width - 4
+			if maxWidth < 40 {
+				maxWidth = 40
+			}
+			if len(desc) > maxWidth*4 {
+				desc = desc[:maxWidth*4] + "..."
+			}
+			sb.WriteString("  " + subtitleStyle.Render(desc))
+			sb.WriteString("\n")
+		}
+
+		sb.WriteString("\n")
+		if t.statusMsg != "" {
+			sb.WriteString("  " + completedStyle.Render(t.statusMsg))
+			sb.WriteString("\n\n")
+		}
+		sb.WriteString(helpStyle.Render("  d download  b bookmark  esc back"))
+		sb.WriteString("\n")
+		return sb.String()
+	}
+
+	// --- List view ---
 	sb.WriteString("\n")
 	sb.WriteString(t.textinput.View())
 	sb.WriteString("\n\n")
@@ -200,9 +335,26 @@ func (t *SearchTab) View() string {
 		sb.WriteString(line + "\n")
 	}
 
-	sb.WriteString(fmt.Sprintf("\n  %d result(s)", len(t.results)))
+	sb.WriteString(fmt.Sprintf("\n  %d result(s)  |  enter to view detail", len(t.results)))
 
 	return sb.String()
+}
+
+// doBookmark saves a bookmark for the given audiobook.
+func (t *SearchTab) doBookmark(book *source.Audiobook) tea.Cmd {
+	database := t.db
+	return func() tea.Msg {
+		bm := &db.Bookmark{
+			AudiobookID: book.ID,
+			Title:       book.Title,
+			Author:      book.Author,
+			Narrator:    book.Narrator,
+			Source:      book.Source,
+			PageURL:     book.PageURL,
+		}
+		_, err := db.CreateBookmark(database, bm)
+		return bookmarkSavedMsg{title: book.Title, err: err}
+	}
 }
 
 // doSearch executes the search in the background and returns a Cmd.
