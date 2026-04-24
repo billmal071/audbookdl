@@ -1,7 +1,9 @@
 package db
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"time"
 )
 
@@ -43,4 +45,44 @@ func ListSearchHistory(db *sql.DB, limit int) ([]*SearchHistoryEntry, error) {
 func ClearSearchHistory(db *sql.DB) error {
 	_, err := db.Exec(`DELETE FROM search_history`)
 	return err
+}
+
+// GetCachedSearch retrieves cached search results if not expired.
+func GetCachedSearch(database *sql.DB, query, source string) ([]byte, error) {
+	key := cacheKey(query, source)
+	var results []byte
+	err := database.QueryRow(
+		"SELECT results FROM search_cache WHERE cache_key = ? AND expires_at > ?",
+		key, time.Now(),
+	).Scan(&results)
+	if err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+// SetCachedSearch stores search results in the cache.
+func SetCachedSearch(database *sql.DB, query, source string, results []byte, ttl time.Duration) error {
+	key := cacheKey(query, source)
+	_, err := database.Exec(`
+		INSERT INTO search_cache (cache_key, results, expires_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(cache_key) DO UPDATE SET
+			results = excluded.results,
+			expires_at = excluded.expires_at,
+			created_at = CURRENT_TIMESTAMP
+	`, key, results, time.Now().Add(ttl))
+	return err
+}
+
+// CleanExpiredCache removes expired cache entries.
+func CleanExpiredCache(database *sql.DB) error {
+	_, err := database.Exec("DELETE FROM search_cache WHERE expires_at < ?", time.Now())
+	return err
+}
+
+// cacheKey returns a deterministic hex key for (query, source) pair.
+func cacheKey(query, source string) string {
+	h := sha256.Sum256([]byte(query + "|" + source))
+	return hex.EncodeToString(h[:])
 }

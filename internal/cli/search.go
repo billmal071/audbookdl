@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -62,9 +63,31 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	books, err := searcher.Search(ctx, query, opts)
-	if err != nil {
-		return fmt.Errorf("search failed: %w", err)
+	// Check search cache first.
+	var books []*source.Audiobook
+	cacheSource := searchSource
+	if cacheSource == "" {
+		cacheSource = "all"
+	}
+	if cached, err := db.GetCachedSearch(db.DB(), query, cacheSource); err == nil {
+		var cachedBooks []*source.Audiobook
+		if json.Unmarshal(cached, &cachedBooks) == nil && len(cachedBooks) > 0 {
+			books = cachedBooks
+		}
+	}
+
+	if len(books) == 0 {
+		var err error
+		books, err = searcher.Search(ctx, query, opts)
+		if err != nil {
+			return fmt.Errorf("search failed: %w", err)
+		}
+		// Cache results for 1 hour.
+		if len(books) > 0 {
+			if data, err := json.Marshal(books); err == nil {
+				_ = db.SetCachedSearch(db.DB(), query, cacheSource, data, time.Hour)
+			}
+		}
 	}
 
 	if len(books) == 0 {

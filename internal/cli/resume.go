@@ -34,6 +34,7 @@ func runResume(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("resume download %d: %w", id, err)
 	}
 
-	fmt.Printf("Download %d marked as pending. Re-run the download command to start it.\n", id)
+	fmt.Printf("Download #%d (%s) marked for retry.\n", id, download.Title)
+	fmt.Println("Use the TUI or re-run the download command to restart.")
 	return nil
 }

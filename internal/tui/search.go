@@ -15,6 +15,7 @@ import (
 	"github.com/billmal071/audbookdl/internal/archive"
 	"github.com/billmal071/audbookdl/internal/config"
 	"github.com/billmal071/audbookdl/internal/db"
+	"github.com/billmal071/audbookdl/internal/downloader"
 	"github.com/billmal071/audbookdl/internal/httpclient"
 	"github.com/billmal071/audbookdl/internal/librivox"
 	"github.com/billmal071/audbookdl/internal/loyalbooks"
@@ -31,6 +32,12 @@ type searchResultMsg struct {
 
 // bookmarkSavedMsg signals that a bookmark was saved (or failed).
 type bookmarkSavedMsg struct {
+	title string
+	err   error
+}
+
+// downloadStartedMsg signals that a download completed (or failed).
+type downloadStartedMsg struct {
 	title string
 	err   error
 }
@@ -107,8 +114,9 @@ func (t *SearchTab) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				t.statusMsg = ""
 				return t, nil
 			case "d":
-				t.statusMsg = fmt.Sprintf("Download queued: %s", t.selectedBook.Title)
-				return t, nil
+				book := t.selectedBook
+				t.statusMsg = fmt.Sprintf("Downloading %s...", book.Title)
+				return t, t.startDownload(book)
 			case "b":
 				book := t.selectedBook
 				return t, t.doBookmark(book)
@@ -181,6 +189,14 @@ func (t *SearchTab) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			t.statusMsg = "Bookmark failed: " + msg.err.Error()
 		} else {
 			t.statusMsg = "Bookmarked: " + msg.title
+		}
+		return t, nil
+
+	case downloadStartedMsg:
+		if msg.err != nil {
+			t.statusMsg = fmt.Sprintf("Download failed: %v", msg.err)
+		} else {
+			t.statusMsg = fmt.Sprintf("Downloaded: %s", msg.title)
 		}
 		return t, nil
 
@@ -358,6 +374,43 @@ func (t *SearchTab) doBookmark(book *source.Audiobook) tea.Cmd {
 		}
 		_, err := db.CreateBookmark(database, bm)
 		return bookmarkSavedMsg{title: book.Title, err: err}
+	}
+}
+
+// startDownload fetches chapters and downloads the audiobook in the background.
+func (t *SearchTab) startDownload(book *source.Audiobook) tea.Cmd {
+	database := t.db
+	return func() tea.Msg {
+		cfg := config.Get()
+		hc := httpclient.New(
+			httpclient.WithTimeout(30*time.Second),
+			httpclient.WithUserAgent(cfg.Network.UserAgent),
+		)
+
+		var src source.Source
+		switch book.Source {
+		case "librivox":
+			src = librivox.NewClient("", hc)
+		case "archive":
+			src = archive.NewClient("", hc)
+		case "loyalbooks":
+			src = loyalbooks.NewClient("", hc)
+		case "openlibrary":
+			src = openlibrary.NewClient("", "", hc)
+		default:
+			return downloadStartedMsg{title: book.Title, err: fmt.Errorf("unknown source: %s", book.Source)}
+		}
+
+		ctx := context.Background()
+		chapters, err := src.GetChapters(ctx, book.ID)
+		if err != nil {
+			return downloadStartedMsg{title: book.Title, err: err}
+		}
+
+		book.ChapterCount = len(chapters)
+		mgr := downloader.NewManager(database, cfg.Download.Directory, cfg.Download.MaxConcurrent)
+		err = mgr.DownloadAudiobook(ctx, book, chapters, nil)
+		return downloadStartedMsg{title: book.Title, err: err}
 	}
 }
 
