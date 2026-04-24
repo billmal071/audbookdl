@@ -308,28 +308,24 @@ func (t *SearchTab) View() string {
 	for i := start; i < end; i++ {
 		book := t.results[i]
 
-		// Build card content
+		// Build compact card content (2 lines)
 		badge := sourceBadge(book.Source)
 		titleLine := titleStyle.Render(book.Title) + "  " + badge
 
-		metaLine := subtitleStyle.Render(book.Author)
+		var parts []string
+		parts = append(parts, subtitleStyle.Render(book.Author))
 		if book.Narrator != "" {
-			metaLine += subtitleStyle.Render(" · " + book.Narrator)
+			parts = append(parts, subtitleStyle.Render(book.Narrator))
 		}
-
-		var tags []string
 		if book.Duration > 0 {
-			tags = append(tags, tagStyle.Render(book.DurationFormatted()))
+			parts = append(parts, tagStyle.Render(book.DurationFormatted()))
 		}
 		if book.ChapterCount > 0 {
-			tags = append(tags, tagStyle.Render(fmt.Sprintf("%d chapters", book.ChapterCount)))
+			parts = append(parts, tagStyle.Render(fmt.Sprintf("%d ch", book.ChapterCount)))
 		}
-		if book.Format != "" {
-			tags = append(tags, tagStyle.Render(book.Format))
-		}
-		tagsLine := strings.Join(tags, subtitleStyle.Render(" · "))
+		infoLine := strings.Join(parts, subtitleStyle.Render(" · "))
 
-		content := titleLine + "\n" + metaLine + "\n" + tagsLine
+		content := titleLine + "\n" + infoLine
 
 		// Apply card style
 		cardWidth := t.width - 4
@@ -432,7 +428,11 @@ func doSearch(query string) tea.Cmd {
 		)
 
 		searcher := buildDefaultSearcher(hc)
-		opts := source.SearchOptions{Limit: config.Get().Search.DefaultLimit}
+		limit := config.Get().Search.DefaultLimit
+		if limit > 5 {
+			limit = 5 // Cap TUI results to avoid overwhelming the screen
+		}
+		opts := source.SearchOptions{Limit: limit}
 		books, err := searcher.Search(ctx, query, opts)
 		return searchResultMsg{books: books, err: err}
 	}
