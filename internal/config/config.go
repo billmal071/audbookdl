@@ -88,7 +88,7 @@ func Init(cfgFile string) error {
 
 	viper.SetDefault("search.default_limit", 10)
 	viper.SetDefault("search.cache_ttl", 1*time.Hour)
-	viper.SetDefault("search.sources", []string{"audible", "librivox", "archive.org", "loyalbooks"})
+	viper.SetDefault("search.sources", []string{"librivox", "archive", "loyalbooks", "openlibrary"})
 
 	viper.SetDefault("network.timeout", 30*time.Second)
 	viper.SetDefault("network.retry_attempts", 3)
