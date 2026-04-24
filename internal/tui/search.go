@@ -219,77 +219,61 @@ func (t *SearchTab) View() string {
 	// --- Detail view ---
 	if t.showDetail && t.selectedBook != nil {
 		book := t.selectedBook
-		sb.WriteString("\n")
-		sb.WriteString(titleStyle.Render("  " + book.Title))
-		sb.WriteString("\n\n")
+		var detail strings.Builder
 
-		if book.Author != "" {
-			sb.WriteString(fmt.Sprintf("  %s  %s\n",
-				subtitleStyle.Render("Author:"),
-				titleStyle.Render(book.Author),
-			))
+		detail.WriteString(titleStyle.Render(book.Title) + "  " + sourceBadge(book.Source))
+		detail.WriteString("\n\n")
+
+		// Metadata table
+		fields := []struct{ label, value string }{
+			{"Author", book.Author},
+			{"Narrator", book.Narrator},
+			{"Duration", book.DurationFormatted()},
+			{"Chapters", fmt.Sprintf("%d", book.ChapterCount)},
+			{"Format", book.Format},
+			{"Year", book.Year},
 		}
-		if book.Narrator != "" {
-			sb.WriteString(fmt.Sprintf("  %s  %s\n",
-				subtitleStyle.Render("Narrator:"),
-				titleStyle.Render(book.Narrator),
-			))
-		}
-		if book.Duration > 0 {
-			sb.WriteString(fmt.Sprintf("  %s  %s\n",
-				subtitleStyle.Render("Duration:"),
-				titleStyle.Render(book.DurationFormatted()),
-			))
-		}
-		if book.ChapterCount > 0 {
-			sb.WriteString(fmt.Sprintf("  %s  %s\n",
-				subtitleStyle.Render("Chapters:"),
-				titleStyle.Render(fmt.Sprintf("%d", book.ChapterCount)),
-			))
-		}
-		if book.Format != "" {
-			sb.WriteString(fmt.Sprintf("  %s  %s\n",
-				subtitleStyle.Render("Format:"),
-				titleStyle.Render(book.Format),
-			))
-		}
-		if book.Source != "" {
-			sb.WriteString(fmt.Sprintf("  %s  %s\n",
-				subtitleStyle.Render("Source:"),
-				sourceStyle.Render(book.Source),
+		for _, f := range fields {
+			if f.value == "" || f.value == "0" || f.value == "0m" {
+				continue
+			}
+			detail.WriteString(fmt.Sprintf("  %s  %s\n",
+				subtitleStyle.Width(12).Render(f.label+":"),
+				titleStyle.Render(f.value),
 			))
 		}
 
 		if book.Description != "" {
-			sb.WriteString("\n")
-			sb.WriteString(subtitleStyle.Render("  Description:"))
-			sb.WriteString("\n")
-			// Wrap description to width.
+			detail.WriteString("\n")
 			desc := book.Description
-			maxWidth := t.width - 4
-			if maxWidth < 40 {
-				maxWidth = 40
+			if len(desc) > 300 {
+				desc = desc[:300] + "..."
 			}
-			if len(desc) > maxWidth*4 {
-				desc = desc[:maxWidth*4] + "..."
-			}
-			sb.WriteString("  " + subtitleStyle.Render(desc))
-			sb.WriteString("\n")
+			detail.WriteString(subtitleStyle.Render(desc))
+			detail.WriteString("\n")
 		}
 
-		sb.WriteString("\n")
 		if t.statusMsg != "" {
-			sb.WriteString("  " + completedStyle.Render(t.statusMsg))
-			sb.WriteString("\n\n")
+			detail.WriteString("\n" + completedStyle.Render(t.statusMsg))
 		}
-		sb.WriteString(helpStyle.Render("  d download  b bookmark  esc back"))
+
+		detail.WriteString("\n\n")
+		detail.WriteString(helpStyle.Render("d download · b bookmark · esc back"))
+
+		panelWidth := t.width - 4
+		if panelWidth < 50 {
+			panelWidth = 50
+		}
+		sb.WriteString("\n")
+		sb.WriteString(detailPanelStyle.Width(panelWidth).Render(detail.String()))
 		sb.WriteString("\n")
 		return sb.String()
 	}
 
 	// --- List view ---
 	sb.WriteString("\n")
-	sb.WriteString(t.textinput.View())
+	inputView := inputFrameStyle.Width(t.width - 4).Render(t.textinput.View())
+	sb.WriteString(inputView)
 	sb.WriteString("\n\n")
 
 	if t.loading {
@@ -323,36 +307,58 @@ func (t *SearchTab) View() string {
 
 	for i := start; i < end; i++ {
 		book := t.results[i]
-		cursor := "  "
-		titleS := titleStyle
-		if i == t.cursor {
-			cursor = cursorStyle.Render("> ")
-			titleS = selectedStyle
-		}
 
-		dur := ""
-		if book.Duration > 0 {
-			dur = " · " + book.DurationFormatted()
-		}
-		chapters := ""
-		if book.ChapterCount > 0 {
-			chapters = fmt.Sprintf(" · %d ch", book.ChapterCount)
-		}
-		narrator := ""
+		// Build card content
+		badge := sourceBadge(book.Source)
+		titleLine := titleStyle.Render(book.Title) + "  " + badge
+
+		metaLine := subtitleStyle.Render(book.Author)
 		if book.Narrator != "" {
-			narrator = " · " + book.Narrator
+			metaLine += subtitleStyle.Render(" · " + book.Narrator)
 		}
 
-		line := fmt.Sprintf("%s%s\n     %s%s%s%s%s",
-			cursor,
-			titleS.Render(book.Title),
-			subtitleStyle.Render(book.Author+narrator),
-			subtitleStyle.Render(dur),
-			subtitleStyle.Render(chapters),
-			"  ",
-			sourceStyle.Render("["+book.Source+"]"),
-		)
-		sb.WriteString(line + "\n")
+		var tags []string
+		if book.Duration > 0 {
+			tags = append(tags, tagStyle.Render(book.DurationFormatted()))
+		}
+		if book.ChapterCount > 0 {
+			tags = append(tags, tagStyle.Render(fmt.Sprintf("%d chapters", book.ChapterCount)))
+		}
+		if book.Format != "" {
+			tags = append(tags, tagStyle.Render(book.Format))
+		}
+		tagsLine := strings.Join(tags, subtitleStyle.Render(" · "))
+
+		content := titleLine + "\n" + metaLine + "\n" + tagsLine
+
+		// Apply card style
+		cardWidth := t.width - 4
+		if cardWidth < 40 {
+			cardWidth = 40
+		}
+
+		var card string
+		if i == t.cursor {
+			card = selectedCardStyle.Width(cardWidth).Render(content)
+		} else {
+			card = cardStyle.Width(cardWidth).Render(content)
+		}
+
+		sb.WriteString(card)
+		sb.WriteString("\n")
+	}
+
+	// Scroll indicator
+	if len(t.results) > maxRows {
+		scrollInfo := fmt.Sprintf("  %d-%d of %d", start+1, end, len(t.results))
+		if start > 0 {
+			scrollInfo = "↑ " + scrollInfo
+		}
+		if end < len(t.results) {
+			scrollInfo += " ↓"
+		}
+		sb.WriteString(subtitleStyle.Render(scrollInfo))
+		sb.WriteString("\n")
 	}
 
 	sb.WriteString(fmt.Sprintf("\n  %d result(s)  |  enter to view detail", len(t.results)))

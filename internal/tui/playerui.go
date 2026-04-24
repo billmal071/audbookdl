@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/billmal071/audbookdl/internal/player"
 )
@@ -141,55 +142,60 @@ func (t *PlayerTab) View() string {
 		return sb.String()
 	}
 
+	// Build player content for the panel
+	var content strings.Builder
+
 	// Title / Author / Narrator
-	sb.WriteString(titleStyle.Render("  "+st.AudiobookTitle) + "\n")
+	content.WriteString(titleStyle.Render(st.AudiobookTitle) + "\n")
 	if st.Author != "" {
-		sb.WriteString(subtitleStyle.Render("  by "+st.Author))
+		content.WriteString(subtitleStyle.Render("by " + st.Author))
 		if st.Narrator != "" {
-			sb.WriteString(subtitleStyle.Render("  ·  narrated by "+st.Narrator))
+			content.WriteString(subtitleStyle.Render("  ·  narrated by " + st.Narrator))
 		}
-		sb.WriteString("\n")
+		content.WriteString("\n")
 	}
-	sb.WriteString("\n")
+	content.WriteString("\n")
 
 	// Chapter info
-	chapterLine := fmt.Sprintf("  Chapter %d / %d", st.ChapterIndex+1, st.TotalChapters)
+	chapterLine := fmt.Sprintf("Chapter %d / %d", st.ChapterIndex+1, st.TotalChapters)
 	if st.ChapterTitle != "" {
 		chapterLine += "  —  " + st.ChapterTitle
 	}
-	sb.WriteString(sourceStyle.Render(chapterLine) + "\n\n")
+	content.WriteString(sourceStyle.Render(chapterLine) + "\n\n")
 
 	// Position / duration progress bar
-	var posStr, durStr string
-	posStr = formatMS(st.PositionMS)
-	durStr = formatMS(st.ChapterDurationMS)
+	posStr := formatMS(st.PositionMS)
+	durStr := formatMS(st.ChapterDurationMS)
 
 	barWidth := 30
 	if t.width > 60 {
-		barWidth = t.width/2 - 10
+		barWidth = t.width/2 - 20
+		if barWidth < 20 {
+			barWidth = 20
+		}
 	}
 	var barProgress float64
 	if st.ChapterDurationMS > 0 {
 		barProgress = float64(st.PositionMS) / float64(st.ChapterDurationMS) * 100
 	}
-	sb.WriteString(fmt.Sprintf("  %s %s %s\n\n",
+	content.WriteString(fmt.Sprintf("%s %s %s\n\n",
 		posStr,
-		progressBar(barProgress, barWidth),
+		styledProgressBar(barProgress, barWidth),
 		durStr,
 	))
 
 	// Playback state
-	statusLabel := "  ■ Stopped"
+	statusLabel := "■ Stopped"
 	switch st.Status {
 	case player.StatusPlaying:
-		statusLabel = "  ▶ Playing"
+		statusLabel = "▶ Playing"
 	case player.StatusPaused:
-		statusLabel = "  ‖ Paused"
+		statusLabel = "‖ Paused"
 	}
-	sb.WriteString(downloadingStyle.Render(statusLabel) + "\n\n")
+	content.WriteString(downloadingStyle.Render(statusLabel) + "\n\n")
 
 	// Speed and volume
-	sb.WriteString(fmt.Sprintf("  %s  %.2fx    %s  %.0f%%\n",
+	content.WriteString(fmt.Sprintf("%s  %.2fx    %s  %.0f%%\n",
 		subtitleStyle.Render("Speed:"),
 		st.Speed,
 		subtitleStyle.Render("Volume:"),
@@ -198,14 +204,33 @@ func (t *PlayerTab) View() string {
 
 	// Sleep timer
 	if st.SleepRemainMS > 0 {
-		sb.WriteString(fmt.Sprintf("\n  %s  %s\n",
+		content.WriteString(fmt.Sprintf("\n%s  %s\n",
 			subtitleStyle.Render("Sleep timer:"),
 			pausedStyle.Render(formatMS(st.SleepRemainMS)),
 		))
 	}
 
-	sb.WriteString("\n")
-	sb.WriteString(helpStyle.Render("  space play/pause  n next  p prev  ←/h -15s  →/l +15s  s speed  v volume"))
+	content.WriteString("\n")
+	content.WriteString(helpStyle.Render("space play/pause  n next  p prev  ←/h -15s  →/l +15s  s speed  v volume"))
+
+	// Wrap in a centered detail panel
+	panelWidth := t.width - 4
+	if panelWidth > 70 {
+		panelWidth = 70
+	}
+	if panelWidth < 40 {
+		panelWidth = 40
+	}
+
+	panel := detailPanelStyle.Width(panelWidth).Render(content.String())
+
+	// Center horizontally
+	if t.width > panelWidth+4 {
+		padding := (t.width - panelWidth - 4) / 2
+		panel = lipgloss.NewStyle().MarginLeft(padding).Render(panel)
+	}
+
+	sb.WriteString(panel)
 	sb.WriteString("\n")
 
 	return sb.String()

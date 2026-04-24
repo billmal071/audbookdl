@@ -119,7 +119,10 @@ func (a *App) View() string {
 			tabLabels = append(tabLabels, inactiveTabStyle.Render(label))
 		}
 	}
-	sb.WriteString(tabBarStyle.Render(strings.Join(tabLabels, "")))
+	tabLine := strings.Join(tabLabels, dividerStyle.Render(" │ "))
+	sb.WriteString(tabLine)
+	sb.WriteString("\n")
+	sb.WriteString(dividerStyle.Render(strings.Repeat("─", a.width)))
 	sb.WriteString("\n")
 
 	// Active tab content

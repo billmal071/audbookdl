@@ -113,27 +113,41 @@ func (t *DownloadsTab) View() string {
 
 	for i := start; i < end; i++ {
 		dl := t.downloads[i]
-		cursor := "  "
-		if i == t.cursor {
-			cursor = cursorStyle.Render("> ")
-		}
-
-		var pct float64
-		var barStr string
-		if dl.TotalSize > 0 {
-			pct = float64(dl.DownloadedSize) / float64(dl.TotalSize) * 100
-			barStr = " " + progressBar(pct, 20) + fmt.Sprintf(" %.0f%%", pct)
-		}
 
 		statusIcon := renderStatus(dl.Status)
-		line := fmt.Sprintf("%s%s %s  %s%s",
-			cursor,
-			statusIcon,
-			titleStyle.Render(dl.Title),
-			subtitleStyle.Render(dl.Author),
-			subtitleStyle.Render(barStr),
-		)
-		sb.WriteString(line + "\n")
+		titleLine := statusIcon + " " + titleStyle.Render(dl.Title)
+		if dl.Author != "" {
+			titleLine += subtitleStyle.Render(" — " + dl.Author)
+		}
+
+		var progressLine string
+		if dl.TotalSize > 0 {
+			pct := float64(dl.DownloadedSize) / float64(dl.TotalSize) * 100
+			barWidth := 30
+			if t.width > 80 {
+				barWidth = 40
+			}
+			progressLine = styledProgressBar(pct, barWidth) + fmt.Sprintf(" %.0f%%", pct)
+		} else {
+			progressLine = subtitleStyle.Render("size unknown")
+		}
+
+		content := titleLine + "\n" + progressLine
+
+		cardWidth := t.width - 4
+		if cardWidth < 40 {
+			cardWidth = 40
+		}
+
+		var card string
+		if i == t.cursor {
+			card = selectedCardStyle.Width(cardWidth).Render(content)
+		} else {
+			card = cardStyle.Width(cardWidth).Render(content)
+		}
+
+		sb.WriteString(card)
+		sb.WriteString("\n")
 	}
 
 	sb.WriteString(fmt.Sprintf("\n  %d download(s)  |  r to refresh", len(t.downloads)))

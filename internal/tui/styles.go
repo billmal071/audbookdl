@@ -1,6 +1,10 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 const (
 	primaryColor   = lipgloss.Color("#7C3AED")
@@ -67,4 +71,102 @@ var (
 	selectedStyle = lipgloss.NewStyle().
 			Foreground(textColor).
 			Bold(true)
+
+	// Card-like container for search results
+	cardStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(mutedColor).
+			Padding(0, 1).
+			MarginBottom(0)
+
+	// Selected card has highlighted border
+	selectedCardStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(primaryColor).
+				Padding(0, 1).
+				MarginBottom(0)
+
+	// Source badge styles — colored pills
+	librivoxBadge = lipgloss.NewStyle().
+			Background(lipgloss.Color("#059669")).
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Padding(0, 1).
+			Bold(true)
+
+	archiveBadge = lipgloss.NewStyle().
+			Background(lipgloss.Color("#2563EB")).
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Padding(0, 1).
+			Bold(true)
+
+	loyalbooksBadge = lipgloss.NewStyle().
+			Background(lipgloss.Color("#D97706")).
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Padding(0, 1).
+			Bold(true)
+
+	openlibraryBadge = lipgloss.NewStyle().
+				Background(lipgloss.Color("#7C3AED")).
+				Foreground(lipgloss.Color("#FFFFFF")).
+				Padding(0, 1).
+				Bold(true)
+
+	// Duration/chapter count tag
+	tagStyle = lipgloss.NewStyle().
+			Foreground(secondaryColor)
+
+	// Divider
+	dividerStyle = lipgloss.NewStyle().
+			Foreground(mutedColor)
+
+	// Search input frame
+	inputFrameStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(primaryColor).
+			Padding(0, 1)
+
+	// Section header
+	sectionHeaderStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(primaryColor).
+				MarginTop(1).
+				MarginBottom(1)
+
+	// Detail panel
+	detailPanelStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(primaryColor).
+				Padding(1, 2)
+
+	// Progress bar colors
+	progressFullStyle  = lipgloss.NewStyle().Foreground(successColor)
+	progressEmptyStyle = lipgloss.NewStyle().Foreground(mutedColor)
 )
+
+// sourceBadge returns a styled badge for the given source name.
+func sourceBadge(source string) string {
+	switch source {
+	case "librivox":
+		return librivoxBadge.Render(" LV ")
+	case "archive":
+		return archiveBadge.Render(" IA ")
+	case "loyalbooks":
+		return loyalbooksBadge.Render(" LB ")
+	case "openlibrary":
+		return openlibraryBadge.Render(" OL ")
+	default:
+		return subtitleStyle.Render(source)
+	}
+}
+
+// styledProgressBar renders a progress bar using styled Unicode characters.
+func styledProgressBar(percent float64, width int) string {
+	filled := int(percent / 100 * float64(width))
+	if filled > width {
+		filled = width
+	}
+	empty := width - filled
+	bar := progressFullStyle.Render(strings.Repeat("━", filled))
+	bar += progressEmptyStyle.Render(strings.Repeat("─", empty))
+	return bar
+}
