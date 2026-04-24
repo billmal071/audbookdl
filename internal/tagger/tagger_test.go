@@ -11,14 +11,24 @@ import (
 	"github.com/billmal071/audbookdl/internal/source"
 )
 
+// minimalMP3 returns a minimal valid ID3v2.3 header that the library accepts.
+func minimalMP3() []byte {
+	return []byte{
+		0x49, 0x44, 0x33, // "ID3"
+		0x03, 0x00, // version 2.3, revision 0
+		0x00,                   // flags
+		0x00, 0x00, 0x00, 0x00, // size (syncsafe integer, 0 bytes)
+	}
+}
+
 func TestTagAudiobook_ValidatesFiles(t *testing.T) {
 	dir := t.TempDir()
 
 	// Create fake chapter files
 	bookDir := filepath.Join(dir, "Author", "Title")
 	os.MkdirAll(bookDir, 0755)
-	os.WriteFile(filepath.Join(bookDir, "01 - Chapter One.mp3"), []byte("fake"), 0644)
-	os.WriteFile(filepath.Join(bookDir, "02 - Chapter Two.mp3"), []byte("fake"), 0644)
+	os.WriteFile(filepath.Join(bookDir, "01 - Chapter One.mp3"), minimalMP3(), 0644)
+	os.WriteFile(filepath.Join(bookDir, "02 - Chapter Two.mp3"), minimalMP3(), 0644)
 
 	book := &source.Audiobook{Title: "Title", Author: "Author"}
 	chapters := []*source.Chapter{
@@ -39,7 +49,7 @@ func TestTagAudiobook_MissingFile(t *testing.T) {
 	dir := t.TempDir()
 	bookDir := filepath.Join(dir, "Author", "Title")
 	os.MkdirAll(bookDir, 0755)
-	os.WriteFile(filepath.Join(bookDir, "01 - Chapter One.mp3"), []byte("fake"), 0644)
+	os.WriteFile(filepath.Join(bookDir, "01 - Chapter One.mp3"), minimalMP3(), 0644)
 	// Chapter 2 is missing
 
 	book := &source.Audiobook{Title: "Title", Author: "Author"}
@@ -81,5 +91,31 @@ func TestTagAudiobook_DownloadsCover(t *testing.T) {
 	}
 	if string(data) != "fake jpg data" {
 		t.Errorf("cover content = %q", string(data))
+	}
+}
+
+func TestTagAudiobook_WritesTagsToFiles(t *testing.T) {
+	dir := t.TempDir()
+	bookDir := filepath.Join(dir, "Author", "Title")
+	os.MkdirAll(bookDir, 0755)
+
+	os.WriteFile(filepath.Join(bookDir, "01 - Chapter One.mp3"), minimalMP3(), 0644)
+
+	book := &source.Audiobook{
+		Title:    "Title",
+		Author:   "Author",
+		Narrator: "Narrator",
+		Year:     "2020",
+	}
+	chapters := []*source.Chapter{
+		{Index: 1, Title: "Chapter One", Format: "mp3"},
+	}
+
+	result := TagAudiobook(context.Background(), book, chapters, dir)
+	if result.TaggedFiles != 1 {
+		t.Errorf("TaggedFiles = %d, want 1", result.TaggedFiles)
+	}
+	if len(result.Errors) != 0 {
+		t.Errorf("unexpected errors: %v", result.Errors)
 	}
 }
