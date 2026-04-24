@@ -1,0 +1,113 @@
+.PHONY: build install clean test run deps fmt lint ci ci-format ci-vet ci-test ci-build build-all
+
+# Go binary path (adjust if go is in a different location)
+GO=$(shell which go 2>/dev/null || echo "/usr/local/go/bin/go")
+
+# Build variables
+BINARY_NAME=audbookdl
+VERSION=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_DIR=./build
+LDFLAGS=-ldflags "-X github.com/billmal071/audbookdl/internal/cli.Version=$(VERSION) -X github.com/billmal071/audbookdl/internal/cli.Commit=$(COMMIT)"
+
+# Default target
+all: build
+
+# Build the binary (CGO disabled for pure-Go compatibility)
+build:
+	@echo "Building $(BINARY_NAME)..."
+	@mkdir -p $(BUILD_DIR)
+	CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/audbookdl
+
+# Install to GOPATH/bin
+install:
+	@echo "Installing $(BINARY_NAME)..."
+	CGO_ENABLED=0 $(GO) install $(LDFLAGS) ./cmd/audbookdl
+
+# Clean build artifacts
+clean:
+	@echo "Cleaning..."
+	@rm -rf $(BUILD_DIR)
+	$(GO) clean
+
+# Run tests
+test:
+	$(GO) test -v ./...
+
+# Run the application
+run:
+	$(GO) run ./cmd/audbookdl $(ARGS)
+
+# Fetch dependencies
+deps:
+	$(GO) mod tidy
+	$(GO) mod download
+
+# Format code
+fmt:
+	$(GO) fmt ./...
+
+# Lint code
+lint:
+	golangci-lint run
+
+# CI targets
+ci: ci-format ci-vet ci-test ci-build
+	@echo "All CI checks passed!"
+
+ci-format:
+	@echo "Checking formatting..."
+	@unformatted=$$(gofmt -l .); \
+	if [ -n "$$unformatted" ]; then \
+		echo "The following files are not formatted:"; \
+		echo "$$unformatted"; \
+		exit 1; \
+	fi
+	@echo "Format check passed"
+
+ci-vet:
+	@echo "Running go vet..."
+	@$(GO) vet ./...
+	@echo "Vet passed"
+
+ci-test:
+	@echo "Running tests..."
+	@$(GO) test -v ./...
+	@echo "Tests passed"
+
+ci-build:
+	@echo "Building..."
+	@CGO_ENABLED=0 $(GO) build -o /dev/null ./cmd/audbookdl
+	@echo "Build passed"
+
+# Build for multiple platforms
+build-all: build-linux build-darwin build-windows
+
+build-linux:
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/audbookdl
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/audbookdl
+
+build-darwin:
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/audbookdl
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/audbookdl
+
+build-windows:
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/audbookdl
+
+# Help
+help:
+	@echo "Available targets:"
+	@echo "  build        - Build the binary"
+	@echo "  install      - Install to GOPATH/bin"
+	@echo "  clean        - Remove build artifacts"
+	@echo "  test         - Run tests"
+	@echo "  run          - Run the application (use ARGS= for arguments)"
+	@echo "  deps         - Fetch dependencies"
+	@echo "  fmt          - Format code"
+	@echo "  lint         - Run linter"
+	@echo "  build-all    - Build for all platforms"
+	@echo "  ci           - Run all CI checks (format, vet, test, build)"
+	@echo "  ci-format    - Check code formatting"
+	@echo "  ci-vet       - Run go vet"
+	@echo "  ci-test      - Run tests"
+	@echo "  ci-build     - Test build"
