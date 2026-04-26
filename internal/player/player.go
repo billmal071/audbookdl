@@ -129,6 +129,7 @@ func (p *Player) Pause() {
 			p.engine.PauseResume()
 		}
 	}
+	p.pausedPosition = p.positionMS
 	p.status = StatusPaused
 }
 
@@ -181,7 +182,7 @@ func (p *Player) PrevChapter() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	currentPos := p.livePositionLocked()
+	currentPos := p.livePosition()
 
 	if currentPos > 3000 {
 		p.positionMS = 0
@@ -209,7 +210,7 @@ func (p *Player) SkipForward(d time.Duration) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	pos := p.livePositionLocked()
+	pos := p.livePosition()
 	pos += d.Milliseconds()
 	p.positionMS = pos
 	p.pausedPosition = pos
@@ -225,7 +226,7 @@ func (p *Player) SkipBackward(d time.Duration) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	pos := p.livePositionLocked()
+	pos := p.livePosition()
 	pos -= d.Milliseconds()
 	if pos < 0 {
 		pos = 0
@@ -309,7 +310,7 @@ func (p *Player) GetStatus() PlayerStatus {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	posMS := p.livePositionRLocked()
+	posMS := p.livePosition()
 
 	s := PlayerStatus{
 		Status:        p.status,
@@ -367,6 +368,7 @@ func (p *Player) GetPlaylist() *Playlist {
 }
 
 // startChapterLocked starts playing the current chapter. Caller must hold p.mu write lock.
+// Lock ordering: caller holds p.mu; this may acquire mpv.mu. Never acquire mpv.mu before p.mu.
 func (p *Player) startChapterLocked() {
 	ch := p.playlist.Chapters[p.chapterIndex]
 	if p.mpv != nil {
@@ -382,22 +384,9 @@ func (p *Player) startChapterLocked() {
 	}
 }
 
-// livePositionLocked returns current position, querying mpv if available. Caller must hold write lock.
-func (p *Player) livePositionLocked() int64 {
-	if p.mpv != nil && p.mpv.IsRunning() {
-		if pos, err := p.mpv.GetPosition(); err == nil {
-			return pos
-		}
-	}
-	if p.status == StatusPlaying && !p.playStartedAt.IsZero() {
-		elapsed := time.Since(p.playStartedAt).Milliseconds()
-		return p.pausedPosition + int64(float64(elapsed)*p.speed)
-	}
-	return p.positionMS
-}
-
-// livePositionRLocked returns current position using read-lock-safe operations.
-func (p *Player) livePositionRLocked() int64 {
+// livePosition returns the current position. Caller must hold p.mu (read or write).
+// Lock ordering: may acquire mpv.mu.
+func (p *Player) livePosition() int64 {
 	if p.mpv != nil && p.mpv.IsRunning() {
 		if pos, err := p.mpv.GetPosition(); err == nil {
 			return pos
