@@ -2,6 +2,7 @@ package player
 
 import (
 	"database/sql"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -51,6 +52,7 @@ type Player struct {
 	saveTicker     *time.Ticker
 	stopChan       chan struct{}
 	engine         *Engine
+	mpv            *MpvController
 }
 
 // NewPlayer creates a new Player with sensible defaults.
@@ -62,6 +64,7 @@ func NewPlayer(database *sql.DB) *Player {
 		volume:   0.8,
 		database: database,
 		engine:   NewEngine(),
+		mpv:      NewMpvController(),
 	}
 }
 
@@ -87,7 +90,7 @@ func (p *Player) Load(playlist *Playlist) {
 }
 
 // Play transitions the player to StatusPlaying, starts the periodic save goroutine,
-// and delegates audio output to the engine.
+// and delegates audio output to the engine or mpv.
 func (p *Player) Play() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -100,12 +103,7 @@ func (p *Player) Play() {
 	if p.playlist != nil {
 		idx := p.chapterIndex
 		if idx >= 0 && idx < len(p.playlist.Chapters) {
-			ch := p.playlist.Chapters[idx]
-			if p.engine != nil {
-				_ = p.engine.PlayFile(ch.FilePath, p.positionMS)
-			}
-			// On non-CGO builds, use external player (mpv/ffplay)
-			playExternal(ch.FilePath)
+			p.startChapterLocked()
 		}
 	}
 }
@@ -115,16 +113,23 @@ func (p *Player) Pause() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	// Snapshot current position based on elapsed time
-	if p.status == StatusPlaying && !p.playStartedAt.IsZero() {
-		elapsed := time.Since(p.playStartedAt).Milliseconds()
-		p.positionMS = p.pausedPosition + int64(float64(elapsed)*p.speed)
+	if p.mpv != nil && p.mpv.IsRunning() {
+		if pos, err := p.mpv.GetPosition(); err == nil {
+			p.positionMS = pos
+		}
+		_ = p.mpv.Pause()
+	} else {
+		// Snapshot current position based on elapsed time
+		if p.status == StatusPlaying && !p.playStartedAt.IsZero() {
+			elapsed := time.Since(p.playStartedAt).Milliseconds()
+			p.positionMS = p.pausedPosition + int64(float64(elapsed)*p.speed)
+		}
+		stopExternal()
+		if p.engine != nil && p.engine.IsPlaying() {
+			p.engine.PauseResume()
+		}
 	}
 	p.status = StatusPaused
-	stopExternal()
-	if p.engine != nil && p.engine.IsPlaying() {
-		p.engine.PauseResume()
-	}
 }
 
 // Stop halts playback, stops the save ticker, persists the final state, and
@@ -133,13 +138,20 @@ func (p *Player) Stop() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	if p.mpv != nil && p.mpv.IsRunning() {
+		if pos, err := p.mpv.GetPosition(); err == nil {
+			p.positionMS = pos
+		}
+		p.mpv.Stop()
+	} else {
+		if p.engine != nil {
+			p.engine.Stop()
+		}
+		stopExternal()
+	}
 	p.status = StatusStopped
 	p.stopSaveLoop()
 	p.saveState()
-	if p.engine != nil {
-		p.engine.Stop()
-	}
-	stopExternal()
 }
 
 // NextChapter advances to the next chapter, capped at the last chapter.
@@ -157,11 +169,8 @@ func (p *Player) NextChapter() {
 		p.positionMS = 0
 		p.pausedPosition = 0
 		p.playStartedAt = time.Now()
-		// Start playing the new chapter
 		if p.status == StatusPlaying {
-			stopExternal()
-			ch := p.playlist.Chapters[p.chapterIndex]
-			playExternal(ch.FilePath)
+			p.startChapterLocked()
 		}
 	}
 }
@@ -172,21 +181,14 @@ func (p *Player) PrevChapter() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	// Compute live position
-	currentPos := p.positionMS
-	if p.status == StatusPlaying && !p.playStartedAt.IsZero() {
-		elapsed := time.Since(p.playStartedAt).Milliseconds()
-		currentPos = p.pausedPosition + int64(float64(elapsed)*p.speed)
-	}
+	currentPos := p.livePositionLocked()
 
 	if currentPos > 3000 {
 		p.positionMS = 0
 		p.pausedPosition = 0
 		p.playStartedAt = time.Now()
 		if p.status == StatusPlaying {
-			stopExternal()
-			ch := p.playlist.Chapters[p.chapterIndex]
-			playExternal(ch.FilePath)
+			p.startChapterLocked()
 		}
 		return
 	}
@@ -196,9 +198,7 @@ func (p *Player) PrevChapter() {
 		p.pausedPosition = 0
 		p.playStartedAt = time.Now()
 		if p.status == StatusPlaying {
-			stopExternal()
-			ch := p.playlist.Chapters[p.chapterIndex]
-			playExternal(ch.FilePath)
+			p.startChapterLocked()
 		}
 	}
 }
@@ -209,7 +209,15 @@ func (p *Player) SkipForward(d time.Duration) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	p.positionMS += d.Milliseconds()
+	pos := p.livePositionLocked()
+	pos += d.Milliseconds()
+	p.positionMS = pos
+	p.pausedPosition = pos
+	p.playStartedAt = time.Now()
+
+	if p.mpv != nil && p.mpv.IsRunning() {
+		_ = p.mpv.SeekTo(pos)
+	}
 }
 
 // SkipBackward subtracts d milliseconds from the current position, clamped to 0.
@@ -217,9 +225,17 @@ func (p *Player) SkipBackward(d time.Duration) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	p.positionMS -= d.Milliseconds()
-	if p.positionMS < 0 {
-		p.positionMS = 0
+	pos := p.livePositionLocked()
+	pos -= d.Milliseconds()
+	if pos < 0 {
+		pos = 0
+	}
+	p.positionMS = pos
+	p.pausedPosition = pos
+	p.playStartedAt = time.Now()
+
+	if p.mpv != nil && p.mpv.IsRunning() {
+		_ = p.mpv.SeekTo(pos)
 	}
 }
 
@@ -234,6 +250,9 @@ func (p *Player) SetSpeed(speed float64) {
 		speed = 3.0
 	}
 	p.speed = speed
+	if p.mpv != nil && p.mpv.IsRunning() {
+		_ = p.mpv.SetSpeed(speed)
+	}
 	if p.engine != nil {
 		p.engine.SetSpeed(speed)
 	}
@@ -250,6 +269,9 @@ func (p *Player) SetVolume(vol float64) {
 		vol = 1.0
 	}
 	p.volume = vol
+	if p.mpv != nil && p.mpv.IsRunning() {
+		_ = p.mpv.SetVolume(vol)
+	}
 	if p.engine != nil {
 		p.engine.SetVolume(vol)
 	}
@@ -287,12 +309,7 @@ func (p *Player) GetStatus() PlayerStatus {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	// Compute live position based on elapsed time since play started
-	posMS := p.positionMS
-	if p.status == StatusPlaying && !p.playStartedAt.IsZero() {
-		elapsed := time.Since(p.playStartedAt).Milliseconds()
-		posMS = p.pausedPosition + int64(float64(elapsed)*p.speed)
-	}
+	posMS := p.livePositionRLocked()
 
 	s := PlayerStatus{
 		Status:        p.status,
@@ -317,6 +334,80 @@ func (p *Player) GetStatus() PlayerStatus {
 	}
 
 	return s
+}
+
+// JumpToChapter jumps directly to the given chapter index.
+func (p *Player) JumpToChapter(index int) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.playlist == nil {
+		return fmt.Errorf("no playlist loaded")
+	}
+	if index < 0 || index >= len(p.playlist.Chapters) {
+		return fmt.Errorf("chapter index %d out of range [0, %d)", index, len(p.playlist.Chapters))
+	}
+
+	p.chapterIndex = index
+	p.positionMS = 0
+	p.pausedPosition = 0
+	p.playStartedAt = time.Now()
+
+	if p.status == StatusPlaying {
+		p.startChapterLocked()
+	}
+	return nil
+}
+
+// GetPlaylist returns the current playlist.
+func (p *Player) GetPlaylist() *Playlist {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.playlist
+}
+
+// startChapterLocked starts playing the current chapter. Caller must hold p.mu write lock.
+func (p *Player) startChapterLocked() {
+	ch := p.playlist.Chapters[p.chapterIndex]
+	if p.mpv != nil {
+		p.mpv.Stop()
+		_ = p.mpv.Start(ch.FilePath, p.positionMS)
+		_ = p.mpv.SetSpeed(p.speed)
+		_ = p.mpv.SetVolume(p.volume)
+	} else if p.engine != nil {
+		p.engine.Stop()
+		_ = p.engine.PlayFile(ch.FilePath, p.positionMS)
+	} else {
+		playExternal(ch.FilePath)
+	}
+}
+
+// livePositionLocked returns current position, querying mpv if available. Caller must hold write lock.
+func (p *Player) livePositionLocked() int64 {
+	if p.mpv != nil && p.mpv.IsRunning() {
+		if pos, err := p.mpv.GetPosition(); err == nil {
+			return pos
+		}
+	}
+	if p.status == StatusPlaying && !p.playStartedAt.IsZero() {
+		elapsed := time.Since(p.playStartedAt).Milliseconds()
+		return p.pausedPosition + int64(float64(elapsed)*p.speed)
+	}
+	return p.positionMS
+}
+
+// livePositionRLocked returns current position using read-lock-safe operations.
+func (p *Player) livePositionRLocked() int64 {
+	if p.mpv != nil && p.mpv.IsRunning() {
+		if pos, err := p.mpv.GetPosition(); err == nil {
+			return pos
+		}
+	}
+	if p.status == StatusPlaying && !p.playStartedAt.IsZero() {
+		elapsed := time.Since(p.playStartedAt).Milliseconds()
+		return p.pausedPosition + int64(float64(elapsed)*p.speed)
+	}
+	return p.positionMS
 }
 
 // startSaveLoop launches the periodic save goroutine.

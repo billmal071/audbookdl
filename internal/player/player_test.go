@@ -214,6 +214,32 @@ func TestPlayer_GetStatus(t *testing.T) {
 	p.Stop()
 }
 
+func TestPlayer_JumpToChapter(t *testing.T) {
+	p := NewPlayer(nil)
+	p.Load(makePlaylist(5))
+	p.Play()
+
+	err := p.JumpToChapter(3)
+	if err != nil {
+		t.Fatalf("JumpToChapter: %v", err)
+	}
+	if p.chapterIndex != 3 {
+		t.Errorf("chapterIndex: got %d, want 3", p.chapterIndex)
+	}
+	if p.positionMS != 0 {
+		t.Errorf("positionMS: got %d, want 0", p.positionMS)
+	}
+	err = p.JumpToChapter(10)
+	if err == nil {
+		t.Error("expected error for out-of-range index")
+	}
+	err = p.JumpToChapter(-1)
+	if err == nil {
+		t.Error("expected error for negative index")
+	}
+	p.Stop()
+}
+
 func TestPlayer_LoadRestoresState(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	database, err := db.InitWithPath(dbPath)
