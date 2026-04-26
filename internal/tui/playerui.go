@@ -238,8 +238,8 @@ func (t *PlayerTab) View() string {
 
 // formatMS formats a millisecond value as "H:MM:SS" or "M:SS".
 func formatMS(ms int64) string {
-	if ms < 0 {
-		ms = 0
+	if ms <= 0 {
+		return "--:--"
 	}
 	total := ms / 1000
 	h := total / 3600

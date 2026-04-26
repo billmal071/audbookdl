@@ -286,6 +286,9 @@ func (t *LibraryTab) buildPlaylist(dl *db.AudiobookDownload) tea.Cmd {
 			idx++
 		}
 
+		// Probe durations from audio files (non-blocking, errors ignored)
+		chapters = player.ProbeChapterDurations(chapters)
+
 		if len(chapters) == 0 {
 			return refreshLibraryMsg{err: fmt.Errorf("no audio files found in %s", dir)}
 		}
