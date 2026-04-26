@@ -1,7 +1,6 @@
 package player
 
 import (
-	"encoding/json"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -26,7 +25,7 @@ func TestNewMpvController_NoMpv(t *testing.T) {
 
 func TestMpvController_SendCommand_NotConnected(t *testing.T) {
 	ctrl := &MpvController{
-		responses: make(map[int64]chan json.RawMessage),
+		responses: make(map[int64]chan mpvResult),
 	}
 	_, err := ctrl.sendCommand("get_property", "time-pos")
 	if err == nil {
@@ -36,15 +35,18 @@ func TestMpvController_SendCommand_NotConnected(t *testing.T) {
 
 func TestMpvController_StopWhenNotRunning(t *testing.T) {
 	ctrl := &MpvController{
-		responses: make(map[int64]chan json.RawMessage),
+		responses: make(map[int64]chan mpvResult),
 	}
 	// Should not panic
 	ctrl.Stop()
+	if ctrl.IsRunning() {
+		t.Error("expected IsRunning to be false after Stop")
+	}
 }
 
 func TestMpvController_IsRunning_Default(t *testing.T) {
 	ctrl := &MpvController{
-		responses: make(map[int64]chan json.RawMessage),
+		responses: make(map[int64]chan mpvResult),
 	}
 	if ctrl.IsRunning() {
 		t.Error("expected IsRunning to be false by default")
@@ -126,9 +128,9 @@ func TestMpvController_Integration(t *testing.T) {
 		t.Errorf("SetVolume failed: %v", err)
 	}
 
-	// Test Seek
-	if err := ctrl.Seek(1000); err != nil {
-		t.Errorf("Seek failed: %v", err)
+	// Test SeekTo
+	if err := ctrl.SeekTo(1000); err != nil {
+		t.Errorf("SeekTo failed: %v", err)
 	}
 
 	ctrl.Stop()

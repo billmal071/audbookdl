@@ -24,6 +24,12 @@ type mpvResponse struct {
 	Error     string          `json:"error"`
 }
 
+// mpvResult carries the data and error fields from an mpv IPC response.
+type mpvResult struct {
+	Data  json.RawMessage
+	Error string
+}
+
 // MpvController manages an mpv subprocess via JSON IPC over a Unix socket.
 type MpvController struct {
 	mu         sync.Mutex
@@ -31,7 +37,7 @@ type MpvController struct {
 	conn       net.Conn
 	socketPath string
 	requestID  atomic.Int64
-	responses  map[int64]chan json.RawMessage
+	responses  map[int64]chan mpvResult
 	respMu     sync.Mutex
 	running    bool
 }
@@ -43,7 +49,7 @@ func NewMpvController() *MpvController {
 	}
 	return &MpvController{
 		socketPath: fmt.Sprintf("/tmp/audbookdl-mpv-%d.sock", os.Getpid()),
-		responses:  make(map[int64]chan json.RawMessage),
+		responses:  make(map[int64]chan mpvResult),
 	}
 }
 
@@ -93,7 +99,7 @@ func (m *MpvController) Start(filePath string, positionMS int64) error {
 
 	m.conn = conn
 	m.running = true
-	m.responses = make(map[int64]chan json.RawMessage)
+	m.responses = make(map[int64]chan mpvResult)
 
 	go m.readResponses()
 
@@ -130,20 +136,24 @@ func (m *MpvController) readResponses() {
 		m.respMu.Unlock()
 
 		if ok {
-			ch <- resp.Data
+			ch <- mpvResult{Data: resp.Data, Error: resp.Error}
 		}
 	}
 }
 
 // sendCommand sends a command to mpv and waits up to 2 seconds for the response.
 func (m *MpvController) sendCommand(args ...interface{}) (json.RawMessage, error) {
+	m.mu.Lock()
 	if m.conn == nil {
+		m.mu.Unlock()
 		return nil, fmt.Errorf("mpv not connected")
 	}
+	conn := m.conn
+	m.mu.Unlock()
 
 	id := m.requestID.Add(1)
 
-	ch := make(chan json.RawMessage, 1)
+	ch := make(chan mpvResult, 1)
 	m.respMu.Lock()
 	m.responses[id] = ch
 	m.respMu.Unlock()
@@ -163,7 +173,8 @@ func (m *MpvController) sendCommand(args ...interface{}) (json.RawMessage, error
 
 	data = append(data, '\n')
 
-	if _, err := m.conn.Write(data); err != nil {
+	conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+	if _, err := conn.Write(data); err != nil {
 		m.respMu.Lock()
 		delete(m.responses, id)
 		m.respMu.Unlock()
@@ -175,7 +186,10 @@ func (m *MpvController) sendCommand(args ...interface{}) (json.RawMessage, error
 		if !ok {
 			return nil, fmt.Errorf("mpv connection closed")
 		}
-		return resp, nil
+		if resp.Error != "" && resp.Error != "success" {
+			return nil, fmt.Errorf("mpv error: %s", resp.Error)
+		}
+		return resp.Data, nil
 	case <-time.After(2 * time.Second):
 		m.respMu.Lock()
 		delete(m.responses, id)
@@ -196,8 +210,8 @@ func (m *MpvController) Resume() error {
 	return err
 }
 
-// Seek seeks to the given position in milliseconds.
-func (m *MpvController) Seek(positionMS int64) error {
+// SeekTo seeks to the given position in milliseconds.
+func (m *MpvController) SeekTo(positionMS int64) error {
 	sec := float64(positionMS) / 1000.0
 	_, err := m.sendCommand("seek", sec, "absolute")
 	return err
@@ -258,11 +272,12 @@ func (m *MpvController) stopLocked() {
 	if m.conn != nil {
 		cmd := mpvCommand{
 			Command:   []interface{}{"quit"},
-			RequestID: m.requestID.Add(1),
+			RequestID: 0,
 		}
 		data, err := json.Marshal(cmd)
 		if err == nil {
 			data = append(data, '\n')
+			m.conn.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
 			m.conn.Write(data)
 		}
 	}
