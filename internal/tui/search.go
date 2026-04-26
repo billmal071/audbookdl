@@ -177,17 +177,33 @@ func (t *SearchTab) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return t, tea.Batch(t.spinner.Tick, doSearch(t.lastQuery, t.page))
 			}
 
-		case "up", "k":
+		case "up":
 			if t.cursor > 0 {
 				t.cursor--
 			}
 			return t, nil
 
-		case "down", "j":
+		case "down":
 			if t.cursor < len(t.results)-1 {
 				t.cursor++
 			}
 			return t, nil
+
+		case "k":
+			if !t.textinput.Focused() {
+				if t.cursor > 0 {
+					t.cursor--
+				}
+				return t, nil
+			}
+
+		case "j":
+			if !t.textinput.Focused() {
+				if t.cursor < len(t.results)-1 {
+					t.cursor++
+				}
+				return t, nil
+			}
 
 		case "esc":
 			if t.textinput.Focused() {
