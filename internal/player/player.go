@@ -37,16 +37,16 @@ type PlayerStatus struct {
 // integration. The engine field is optional: if NewEngine returns nil or audio
 // hardware is unavailable, the player operates as a state-only controller.
 type Player struct {
-	mu            sync.RWMutex
-	status        Status
-	playlist      *Playlist
-	chapterIndex  int
-	positionMS    int64
-	speed         float64
-	volume        float64
+	mu             sync.RWMutex
+	status         Status
+	playlist       *Playlist
+	chapterIndex   int
+	positionMS     int64
+	speed          float64
+	volume         float64
 	sleepTimer     *time.Timer
 	sleepRemainMS  int64
-	playStartedAt time.Time // when current playback started (for elapsed tracking)
+	playStartedAt  time.Time // when current playback started (for elapsed tracking)
 	pausedPosition int64     // positionMS when paused
 	database       *sql.DB
 	saveTicker     *time.Ticker
