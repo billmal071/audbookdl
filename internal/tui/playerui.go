@@ -201,7 +201,7 @@ func (t *PlayerTab) View() string {
 	content.WriteString(sourceStyle.Render(chapterLine) + "\n\n")
 
 	// Position / duration progress bar
-	posStr := formatMS(st.PositionMS)
+	posStr := formatPosition(st.PositionMS)
 	durStr := formatMS(st.ChapterDurationMS)
 
 	barWidth := 30
@@ -248,7 +248,7 @@ func (t *PlayerTab) View() string {
 		label := fmt.Sprintf("%dm", sleepPresets[t.sleepIndex])
 		remaining := ""
 		if st.SleepRemainMS > 0 {
-			remaining = " (" + formatMS(st.SleepRemainMS) + " left)"
+			remaining = " (" + formatPosition(st.SleepRemainMS) + " left)"
 		}
 		content.WriteString(fmt.Sprintf("\n%s  %s%s\n",
 			subtitleStyle.Render("Sleep timer:"),
@@ -288,7 +288,24 @@ func (t *PlayerTab) View() string {
 	return sb.String()
 }
 
-// formatMS formats a millisecond value as "H:MM:SS" or "M:SS".
+// formatPosition formats a millisecond position as "H:MM:SS" or "M:SS".
+// Zero is valid (start of track), so it shows "0:00".
+func formatPosition(ms int64) string {
+	if ms < 0 {
+		ms = 0
+	}
+	total := ms / 1000
+	h := total / 3600
+	m := (total % 3600) / 60
+	s := total % 60
+	if h > 0 {
+		return fmt.Sprintf("%d:%02d:%02d", h, m, s)
+	}
+	return fmt.Sprintf("%d:%02d", m, s)
+}
+
+// formatMS formats a millisecond duration as "H:MM:SS" or "M:SS".
+// Returns "--:--" when duration is unknown (zero or negative).
 func formatMS(ms int64) string {
 	if ms <= 0 {
 		return "--:--"
