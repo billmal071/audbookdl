@@ -39,8 +39,8 @@ func TestManager_Convert_EmptyBook(t *testing.T) {
 		Chapters: nil,
 	}
 	err := m.Convert(context.Background(), book, Options{
-		OutputDir: t.TempDir(),
-		Voice:     "test",
+		OutputDir:   t.TempDir(),
+		Voice:       "test",
 		SkipConfirm: true,
 	})
 	if err == nil {
