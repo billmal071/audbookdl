@@ -108,12 +108,18 @@ func (m *MpvController) Start(filePath string, positionMS int64) error {
 
 // readResponses reads JSON responses from the mpv IPC socket and dispatches
 // them to waiting channels by request_id. Events (request_id == 0) are skipped.
+// When the connection closes (mpv exits), this marks the controller as not running.
 func (m *MpvController) readResponses() {
 	dec := json.NewDecoder(m.conn)
 	for {
 		var resp mpvResponse
 		if err := dec.Decode(&resp); err != nil {
-			// Connection closed or error — clean up pending channels
+			// Connection closed — mpv exited. Mark as not running.
+			m.mu.Lock()
+			m.running = false
+			m.mu.Unlock()
+
+			// Clean up pending channels
 			m.respMu.Lock()
 			for id, ch := range m.responses {
 				close(ch)
@@ -144,7 +150,7 @@ func (m *MpvController) readResponses() {
 // sendCommand sends a command to mpv and waits up to 2 seconds for the response.
 func (m *MpvController) sendCommand(args ...interface{}) (json.RawMessage, error) {
 	m.mu.Lock()
-	if m.conn == nil {
+	if m.conn == nil || !m.running {
 		m.mu.Unlock()
 		return nil, fmt.Errorf("mpv not connected")
 	}
@@ -190,7 +196,7 @@ func (m *MpvController) sendCommand(args ...interface{}) (json.RawMessage, error
 			return nil, fmt.Errorf("mpv error: %s", resp.Error)
 		}
 		return resp.Data, nil
-	case <-time.After(2 * time.Second):
+	case <-time.After(500 * time.Millisecond):
 		m.respMu.Lock()
 		delete(m.responses, id)
 		m.respMu.Unlock()
