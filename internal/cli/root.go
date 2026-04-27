@@ -71,6 +71,8 @@ func init() {
 	rootCmd.AddCommand(completionCmd)
 	rootCmd.AddCommand(queueCmd)
 	rootCmd.AddCommand(playCmd)
+	rootCmd.AddCommand(convertCmd)
+	rootCmd.AddCommand(voicesCmd)
 }
 
 func Verbose() bool { return verbose }
