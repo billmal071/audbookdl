@@ -78,6 +78,17 @@ func (m *Manager) DownloadAudiobook(ctx context.Context, book *source.Audiobook,
 	var mu sync.Mutex
 	var downloadErr error
 
+	// Build a map from chapter index to chapter DB ID for progress updates.
+	chapterDBIDs := make(map[int]int64)
+	chapterList, _ := db.ListChapterDownloads(m.db, dlID)
+	for _, c := range chapterList {
+		chapterDBIDs[c.ChapterIndex] = c.ID
+	}
+
+	// Track aggregate downloaded bytes for the parent record.
+	var totalDownloaded int64
+	var totalMu sync.Mutex
+
 	for _, ch := range chapters {
 		select {
 		case <-ctx.Done():
@@ -93,23 +104,42 @@ func (m *Manager) DownloadAudiobook(ctx context.Context, book *source.Audiobook,
 			defer func() { <-sem }()
 
 			filePath := m.buildChapterPath(book.Author, book.Title, chapter)
+			chDBID := chapterDBIDs[chapter.Index]
+
 			retryCfg := DefaultRetryConfig()
 			retryCfg.MaxAttempts = 3
 			retryCfg.BaseDelay = 100 * time.Millisecond
 
 			err := RetryOperation(ctx, retryCfg, func() error {
 				return DownloadFile(ctx, chapter.DownloadURL, filePath, func(downloaded int64) {
+					// Update chapter progress in DB.
+					if chDBID > 0 {
+						db.UpdateChapterProgress(m.db, chDBID, downloaded) //nolint:errcheck
+					}
+					// Update aggregate progress.
+					totalMu.Lock()
+					totalDownloaded += downloaded
+					db.UpdateDownloadProgress(m.db, dlID, totalDownloaded) //nolint:errcheck
+					totalMu.Unlock()
+
 					if progressFn != nil {
 						progressFn(chapter.Index, len(chapters), downloaded)
 					}
 				})
 			})
 			if err != nil {
+				if chDBID > 0 {
+					db.UpdateChapterStatus(m.db, chDBID, db.StatusFailed) //nolint:errcheck
+				}
 				mu.Lock()
 				if downloadErr == nil {
 					downloadErr = fmt.Errorf("chapter %d (%s): %w", chapter.Index, chapter.Title, err)
 				}
 				mu.Unlock()
+			} else {
+				if chDBID > 0 {
+					db.UpdateChapterStatus(m.db, chDBID, db.StatusCompleted) //nolint:errcheck
+				}
 			}
 		}(ch)
 	}
