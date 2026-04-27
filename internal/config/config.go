@@ -16,6 +16,7 @@ type Config struct {
 	Search        SearchConfig        `mapstructure:"search"`
 	Network       NetworkConfig       `mapstructure:"network"`
 	Notifications NotificationsConfig `mapstructure:"notifications"`
+	Conversion    ConversionConfig    `mapstructure:"conversion"`
 }
 
 // DownloadConfig holds download settings
@@ -51,6 +52,13 @@ type NetworkConfig struct {
 type NotificationsConfig struct {
 	Enabled bool `mapstructure:"enabled"`
 	Sound   bool `mapstructure:"sound"`
+}
+
+// ConversionConfig holds text-to-speech conversion settings
+type ConversionConfig struct {
+	DefaultEngine string `mapstructure:"default_engine"`
+	DefaultVoice  string `mapstructure:"default_voice"`
+	SpeechRate    string `mapstructure:"speech_rate"`
 }
 
 var cfg *Config
@@ -96,6 +104,10 @@ func Init(cfgFile string) error {
 
 	viper.SetDefault("notifications.enabled", false)
 	viper.SetDefault("notifications.sound", false)
+
+	viper.SetDefault("conversion.default_engine", "edge")
+	viper.SetDefault("conversion.default_voice", "en-US-AriaNeural")
+	viper.SetDefault("conversion.speech_rate", "+0%")
 
 	if cfgFile != "" {
 		viper.SetConfigFile(cfgFile)
