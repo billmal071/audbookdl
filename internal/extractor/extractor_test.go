@@ -1,6 +1,8 @@
 package extractor
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -62,5 +64,80 @@ func TestDetectChapters_Empty(t *testing.T) {
 	chapters := DetectChapters("")
 	if len(chapters) != 0 {
 		t.Errorf("expected 0 chapters for empty text, got %d", len(chapters))
+	}
+}
+
+func TestExtract_TXT(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.txt")
+	content := "Chapter 1: Hello\nThis is chapter one.\n\nChapter 2: World\nThis is chapter two."
+	os.WriteFile(path, []byte(content), 0644)
+
+	book, err := Extract(path)
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if len(book.Chapters) != 2 {
+		t.Fatalf("expected 2 chapters, got %d", len(book.Chapters))
+	}
+	if book.Title != "test" {
+		t.Errorf("title: got %q, want %q", book.Title, "test")
+	}
+}
+
+func TestExtract_UnsupportedFormat(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.xyz")
+	os.WriteFile(path, []byte("data"), 0644)
+
+	_, err := Extract(path)
+	if err == nil {
+		t.Error("expected error for unsupported format")
+	}
+}
+
+func TestExtract_FileNotFound(t *testing.T) {
+	_, err := Extract("/nonexistent/file.txt")
+	if err == nil {
+		t.Error("expected error for missing file")
+	}
+}
+
+func TestExtractTXT(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "book.txt")
+	os.WriteFile(path, []byte("Hello world. This is a test book with enough content."), 0644)
+
+	book, err := extractTXT(path)
+	if err != nil {
+		t.Fatalf("extractTXT: %v", err)
+	}
+	if book.Title != "book" {
+		t.Errorf("title: got %q", book.Title)
+	}
+	if len(book.Chapters) == 0 {
+		t.Error("expected at least 1 chapter")
+	}
+}
+
+func TestExtractDOCX_InvalidZip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bad.docx")
+	os.WriteFile(path, []byte("not a zip"), 0644)
+
+	_, err := extractDOCX(path)
+	if err == nil {
+		t.Error("expected error for invalid docx")
+	}
+}
+
+func TestExtractEPUB_InvalidZip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bad.epub")
+	os.WriteFile(path, []byte("not a zip"), 0644)
+
+	_, err := extractEPUB(path)
+	if err == nil {
+		t.Error("expected error for invalid epub")
 	}
 }
