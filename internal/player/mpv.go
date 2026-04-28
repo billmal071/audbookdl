@@ -43,14 +43,32 @@ type MpvController struct {
 }
 
 // NewMpvController returns a new MpvController, or nil if mpv is not on PATH.
+// It also cleans up any orphaned mpv processes from previous audbookdl sessions.
 func NewMpvController() *MpvController {
 	if _, err := exec.LookPath("mpv"); err != nil {
 		return nil
 	}
+	killOrphanedMpv()
+	socketPath := fmt.Sprintf("/tmp/audbookdl-mpv-%d.sock", os.Getpid())
+	os.Remove(socketPath) // clean stale socket from a previous crash
 	return &MpvController{
-		socketPath: fmt.Sprintf("/tmp/audbookdl-mpv-%d.sock", os.Getpid()),
+		socketPath: socketPath,
 		responses:  make(map[int64]chan mpvResult),
 	}
+}
+
+// killOrphanedMpv finds and kills any mpv processes started by previous
+// audbookdl sessions (identified by the --input-ipc-server flag pattern).
+func killOrphanedMpv() {
+	out, err := exec.Command("pgrep", "-f", "mpv.*audbookdl-mpv").Output()
+	if err != nil || len(out) == 0 {
+		return
+	}
+	// Kill each matching PID
+	_ = exec.Command("pkill", "-f", "mpv.*audbookdl-mpv").Run()
+	// Give processes a moment to die, then force-kill stragglers
+	time.Sleep(100 * time.Millisecond)
+	_ = exec.Command("pkill", "-9", "-f", "mpv.*audbookdl-mpv").Run()
 }
 
 // Start launches mpv with the given file and seeks to positionMS.

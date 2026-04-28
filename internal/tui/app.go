@@ -77,6 +77,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q":
+			// Stop the player so mpv doesn't keep running after exit.
+			if pt, ok := a.tabs[3].(*PlayerTab); ok && pt.player != nil {
+				pt.player.Stop()
+			}
 			return a, tea.Quit
 		case "tab":
 			a.activeTab = (a.activeTab + 1) % len(a.tabs)
