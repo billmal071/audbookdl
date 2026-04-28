@@ -5,12 +5,16 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/billmal071/audbookdl/internal/db"
 )
+
+// tickMsg triggers a periodic refresh of the downloads list.
+type tickMsg struct{}
 
 // refreshDownloadsMsg carries a fresh download list from the DB.
 type refreshDownloadsMsg struct {
@@ -44,7 +48,14 @@ func (t *DownloadsTab) ShortHelp() []key.Binding {
 }
 
 func (t *DownloadsTab) Init() tea.Cmd {
-	return t.refresh()
+	return tea.Batch(t.refresh(), t.tick())
+}
+
+// tick returns a command that sends a tickMsg after 2 seconds.
+func (t *DownloadsTab) tick() tea.Cmd {
+	return tea.Tick(2*time.Second, func(time.Time) tea.Msg {
+		return tickMsg{}
+	})
 }
 
 func (t *DownloadsTab) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -68,6 +79,9 @@ func (t *DownloadsTab) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return t, nil
+
+	case tickMsg:
+		return t, tea.Batch(t.refresh(), t.tick())
 
 	case refreshDownloadsMsg:
 		t.err = msg.err
@@ -129,6 +143,19 @@ func (t *DownloadsTab) View() string {
 				barWidth = 40
 			}
 			progressLine = styledProgressBar(pct, barWidth) + fmt.Sprintf(" %.0f%%", pct)
+		} else if chapters, err := db.ListChapterDownloads(t.db, dl.ID); err == nil && len(chapters) > 0 {
+			done := 0
+			for _, c := range chapters {
+				if c.Status == db.StatusCompleted {
+					done++
+				}
+			}
+			pct := float64(done) / float64(len(chapters)) * 100
+			barWidth := 30
+			if t.width > 80 {
+				barWidth = 40
+			}
+			progressLine = styledProgressBar(pct, barWidth) + fmt.Sprintf(" %d/%d chapters", done, len(chapters))
 		} else {
 			progressLine = subtitleStyle.Render("size unknown")
 		}

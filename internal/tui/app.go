@@ -100,6 +100,36 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
+	// Always forward tick messages to the relevant tabs, even when inactive,
+	// so they keep refreshing in the background.
+	switch msg.(type) {
+	case tickMsg:
+		// Downloads tab (index 1) auto-refresh.
+		for i, t := range a.tabs {
+			if _, ok := t.(*DownloadsTab); ok && i != a.activeTab {
+				updated, cmd := t.Update(msg)
+				a.tabs[i] = updated.(Tab)
+				if cmd != nil {
+					// Forward to active tab too, then return.
+					activeUpdated, activeCmd := a.tabs[a.activeTab].Update(msg)
+					a.tabs[a.activeTab] = activeUpdated.(Tab)
+					return a, tea.Batch(cmd, activeCmd)
+				}
+			}
+		}
+	case playerTickMsg:
+		// Player tab (index 3) keeps ticking for position updates.
+		for i, t := range a.tabs {
+			if _, ok := t.(*PlayerTab); ok && i != a.activeTab {
+				updated, cmd := t.Update(msg)
+				a.tabs[i] = updated.(Tab)
+				if cmd != nil {
+					return a, cmd
+				}
+			}
+		}
+	}
+
 	// Forward all other messages to the active tab.
 	updated, cmd := a.tabs[a.activeTab].Update(msg)
 	a.tabs[a.activeTab] = updated.(Tab)
