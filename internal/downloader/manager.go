@@ -179,6 +179,153 @@ func (m *Manager) DownloadAudiobook(ctx context.Context, book *source.Audiobook,
 	return nil
 }
 
+// ResumeDownload retries a failed or paused download. It loads the existing
+// record from the database, skips chapters already completed, and downloads
+// only the remaining ones using fresh chapter URLs from the source.
+func (m *Manager) ResumeDownload(ctx context.Context, dlID int64, chapters []*source.Chapter, progressFn DownloadProgressFunc) error {
+	dl, err := db.GetDownload(m.db, dlID)
+	if err != nil {
+		return fmt.Errorf("get download %d: %w", dlID, err)
+	}
+	if dl.Status != db.StatusPaused && dl.Status != db.StatusFailed {
+		return fmt.Errorf("download %d has status %q; only paused or failed downloads can be resumed", dlID, dl.Status)
+	}
+
+	if err := db.UpdateDownloadStatus(m.db, dlID, db.StatusDownloading); err != nil {
+		return fmt.Errorf("update status: %w", err)
+	}
+
+	// Load existing chapter records and index by chapter number.
+	existingChapters, err := db.ListChapterDownloads(m.db, dlID)
+	if err != nil {
+		return fmt.Errorf("list chapters: %w", err)
+	}
+	chapterDBByIndex := make(map[int]*db.ChapterDownload)
+	for _, c := range existingChapters {
+		chapterDBByIndex[c.ChapterIndex] = c
+	}
+
+	// Determine which chapters still need downloading.
+	var pending []*source.Chapter
+	for _, ch := range chapters {
+		if rec, ok := chapterDBByIndex[ch.Index]; ok && rec.Status == db.StatusCompleted {
+			continue // already done
+		}
+		pending = append(pending, ch)
+	}
+
+	if len(pending) == 0 {
+		if err := db.UpdateDownloadStatus(m.db, dlID, db.StatusCompleted); err != nil {
+			return fmt.Errorf("mark completed: %w", err)
+		}
+		return nil
+	}
+
+	// Create chapter records for any new chapters not yet tracked.
+	for _, ch := range pending {
+		if _, ok := chapterDBByIndex[ch.Index]; !ok {
+			filePath := m.buildChapterPath(dl.Author, dl.Title, ch)
+			id, createErr := db.CreateChapterDownload(m.db, &db.ChapterDownload{
+				DownloadID:   dlID,
+				ChapterIndex: ch.Index,
+				Title:        ch.Title,
+				FilePath:     filePath,
+				FileSize:     ch.FileSize,
+			})
+			if createErr == nil {
+				chapterDBByIndex[ch.Index] = &db.ChapterDownload{ID: id, ChapterIndex: ch.Index}
+			}
+		} else {
+			// Reset failed chapter status so progress is tracked fresh.
+			rec := chapterDBByIndex[ch.Index]
+			db.UpdateChapterStatus(m.db, rec.ID, db.StatusDownloading) //nolint:errcheck
+		}
+	}
+
+	sem := make(chan struct{}, m.maxConcurrent)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var downloadErr error
+
+	// Seed per-chapter bytes from already-completed chapters.
+	chapterBytes := make(map[int]int64)
+	var progressMu sync.Mutex
+	for _, rec := range existingChapters {
+		if rec.Status == db.StatusCompleted {
+			chapterBytes[rec.ChapterIndex] = rec.Downloaded
+		}
+	}
+
+	for _, ch := range pending {
+		select {
+		case <-ctx.Done():
+			db.UpdateDownloadStatus(m.db, dlID, db.StatusFailed) //nolint:errcheck
+			return ctx.Err()
+		default:
+		}
+
+		wg.Add(1)
+		go func(chapter *source.Chapter) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			filePath := m.buildChapterPath(dl.Author, dl.Title, chapter)
+			chDBID := chapterDBByIndex[chapter.Index].ID
+
+			retryCfg := DefaultRetryConfig()
+			retryCfg.MaxAttempts = 3
+			retryCfg.BaseDelay = 100 * time.Millisecond
+
+			err := RetryOperation(ctx, retryCfg, func() error {
+				return DownloadFile(ctx, chapter.DownloadURL, filePath, func(downloaded int64) {
+					if chDBID > 0 {
+						db.UpdateChapterProgress(m.db, chDBID, downloaded) //nolint:errcheck
+					}
+					progressMu.Lock()
+					chapterBytes[chapter.Index] = downloaded
+					var total int64
+					for _, b := range chapterBytes {
+						total += b
+					}
+					db.UpdateDownloadProgress(m.db, dlID, total) //nolint:errcheck
+					progressMu.Unlock()
+
+					if progressFn != nil {
+						progressFn(chapter.Index, len(chapters), downloaded)
+					}
+				})
+			})
+			if err != nil {
+				if chDBID > 0 {
+					db.UpdateChapterStatus(m.db, chDBID, db.StatusFailed) //nolint:errcheck
+				}
+				mu.Lock()
+				if downloadErr == nil {
+					downloadErr = fmt.Errorf("chapter %d (%s): %w", chapter.Index, chapter.Title, err)
+				}
+				mu.Unlock()
+			} else {
+				if chDBID > 0 {
+					db.UpdateChapterStatus(m.db, chDBID, db.StatusCompleted) //nolint:errcheck
+				}
+			}
+		}(ch)
+	}
+
+	wg.Wait()
+
+	if downloadErr != nil {
+		db.UpdateDownloadStatus(m.db, dlID, db.StatusFailed) //nolint:errcheck
+		return downloadErr
+	}
+
+	if err := db.UpdateDownloadStatus(m.db, dlID, db.StatusCompleted); err != nil {
+		return fmt.Errorf("mark completed: %w", err)
+	}
+	return nil
+}
+
 // buildChapterPath returns the full file path for a chapter file.
 func (m *Manager) buildChapterPath(author, title string, ch *source.Chapter) string {
 	filename := fmt.Sprintf("%02d - %s.%s", ch.Index, ch.Title, ch.Format)

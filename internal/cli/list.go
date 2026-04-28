@@ -43,6 +43,14 @@ func runList(cmd *cobra.Command, args []string) error {
 		if d.TotalSize > 0 {
 			pct := float64(d.DownloadedSize) / float64(d.TotalSize) * 100
 			progress = fmt.Sprintf("%.1f%%", pct)
+		} else if chapters, err := db.ListChapterDownloads(db.DB(), d.ID); err == nil && len(chapters) > 0 {
+			done := 0
+			for _, c := range chapters {
+				if c.Status == db.StatusCompleted {
+					done++
+				}
+			}
+			progress = fmt.Sprintf("%d/%d chapters", done, len(chapters))
 		}
 
 		fmt.Printf("%-6d  %-40s  %-25s  %-12s  %s\n",
