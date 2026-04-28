@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -85,9 +86,9 @@ func (m *Manager) DownloadAudiobook(ctx context.Context, book *source.Audiobook,
 		chapterDBIDs[c.ChapterIndex] = c.ID
 	}
 
-	// Track aggregate downloaded bytes for the parent record.
-	var totalDownloaded int64
-	var totalMu sync.Mutex
+	// Track per-chapter downloaded bytes; aggregate for the parent record.
+	chapterBytes := make(map[int]int64) // chapter index → latest downloaded bytes
+	var progressMu sync.Mutex
 
 	for _, ch := range chapters {
 		select {
@@ -116,11 +117,15 @@ func (m *Manager) DownloadAudiobook(ctx context.Context, book *source.Audiobook,
 					if chDBID > 0 {
 						db.UpdateChapterProgress(m.db, chDBID, downloaded) //nolint:errcheck
 					}
-					// Update aggregate progress.
-					totalMu.Lock()
-					totalDownloaded += downloaded
-					db.UpdateDownloadProgress(m.db, dlID, totalDownloaded) //nolint:errcheck
-					totalMu.Unlock()
+					// Update aggregate progress (downloaded is cumulative per chapter).
+					progressMu.Lock()
+					chapterBytes[chapter.Index] = downloaded
+					var total int64
+					for _, b := range chapterBytes {
+						total += b
+					}
+					db.UpdateDownloadProgress(m.db, dlID, total) //nolint:errcheck
+					progressMu.Unlock()
 
 					if progressFn != nil {
 						progressFn(chapter.Index, len(chapters), downloaded)
@@ -137,6 +142,7 @@ func (m *Manager) DownloadAudiobook(ctx context.Context, book *source.Audiobook,
 				}
 				mu.Unlock()
 			} else {
+				// Update chapter file size from actual file on disk.
 				if chDBID > 0 {
 					db.UpdateChapterStatus(m.db, chDBID, db.StatusCompleted) //nolint:errcheck
 				}
@@ -145,6 +151,22 @@ func (m *Manager) DownloadAudiobook(ctx context.Context, book *source.Audiobook,
 	}
 
 	wg.Wait()
+
+	// After all downloads, compute actual total size from files on disk
+	// and update the record (handles sources that don't report FileSize).
+	if totalSize == 0 {
+		var actualSize int64
+		for _, ch := range chapters {
+			fp := m.buildChapterPath(book.Author, book.Title, ch)
+			if info, err := os.Stat(fp); err == nil {
+				actualSize += info.Size()
+			}
+		}
+		if actualSize > 0 {
+			m.db.Exec("UPDATE audiobook_downloads SET total_size = ?, downloaded_size = ? WHERE id = ?",
+				actualSize, actualSize, dlID) //nolint:errcheck
+		}
+	}
 
 	if downloadErr != nil {
 		db.UpdateDownloadStatus(m.db, dlID, db.StatusFailed) //nolint:errcheck
