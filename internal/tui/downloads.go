@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -10,7 +11,16 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/billmal071/audbookdl/internal/config"
 	"github.com/billmal071/audbookdl/internal/db"
+	"github.com/billmal071/audbookdl/internal/downloader"
+	"github.com/billmal071/audbookdl/internal/httpclient"
+	"github.com/billmal071/audbookdl/internal/librivox"
+	"github.com/billmal071/audbookdl/internal/loyalbooks"
+	"github.com/billmal071/audbookdl/internal/openlibrary"
+	"github.com/billmal071/audbookdl/internal/source"
+
+	"github.com/billmal071/audbookdl/internal/archive"
 )
 
 // tickMsg triggers a periodic refresh of the downloads list.
@@ -22,6 +32,13 @@ type refreshDownloadsMsg struct {
 	err       error
 }
 
+// resumeFinishedMsg signals that a resume attempt completed.
+type resumeFinishedMsg struct {
+	dlID  int64
+	title string
+	err   error
+}
+
 // DownloadsTab shows all audiobook downloads and their status.
 type DownloadsTab struct {
 	db        *sql.DB
@@ -30,6 +47,7 @@ type DownloadsTab struct {
 	err       error
 	width     int
 	height    int
+	statusMsg string
 }
 
 // NewDownloadsTab constructs a DownloadsTab.
@@ -41,6 +59,7 @@ func (t *DownloadsTab) TabName() string { return "Downloads" }
 
 func (t *DownloadsTab) ShortHelp() []key.Binding {
 	return []key.Binding{
+		key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "resume")),
 		key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 		key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
 		key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
@@ -69,6 +88,15 @@ func (t *DownloadsTab) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "r":
 			return t, t.refresh()
+		case "R":
+			if t.cursor >= 0 && t.cursor < len(t.downloads) {
+				dl := t.downloads[t.cursor]
+				if dl.Status == db.StatusFailed || dl.Status == db.StatusPaused {
+					t.statusMsg = fmt.Sprintf("Resuming %s...", dl.Title)
+					return t, t.resumeDownload(dl)
+				}
+				t.statusMsg = "Only failed or paused downloads can be resumed"
+			}
 		case "up", "k":
 			if t.cursor > 0 {
 				t.cursor--
@@ -79,6 +107,14 @@ func (t *DownloadsTab) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return t, nil
+
+	case resumeFinishedMsg:
+		if msg.err != nil {
+			t.statusMsg = fmt.Sprintf("Resume failed: %v", msg.err)
+		} else {
+			t.statusMsg = fmt.Sprintf("Resumed: %s", msg.title)
+		}
+		return t, t.refresh()
 
 	case tickMsg:
 		return t, tea.Batch(t.refresh(), t.tick())
@@ -178,7 +214,11 @@ func (t *DownloadsTab) View() string {
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString(fmt.Sprintf("\n  %d download(s)  |  r to refresh", len(t.downloads)))
+	footer := fmt.Sprintf("\n  %d download(s)  |  R resume  |  r refresh", len(t.downloads))
+	if t.statusMsg != "" {
+		footer += "  |  " + t.statusMsg
+	}
+	sb.WriteString(footer)
 
 	return sb.String()
 }
@@ -236,6 +276,42 @@ func (t *DownloadsTab) refresh() tea.Cmd {
 			downloads = append(downloads, &d)
 		}
 		return refreshDownloadsMsg{downloads: downloads}
+	}
+}
+
+// resumeDownload re-downloads failed/paused chapters for the given download.
+func (t *DownloadsTab) resumeDownload(dl *db.AudiobookDownload) tea.Cmd {
+	database := t.db
+	return func() tea.Msg {
+		cfg := config.Get()
+		hc := httpclient.New(
+			httpclient.WithTimeout(30*time.Second),
+			httpclient.WithUserAgent(cfg.Network.UserAgent),
+		)
+
+		var src source.Source
+		switch dl.Source {
+		case "librivox":
+			src = librivox.NewClient("", hc)
+		case "archive":
+			src = archive.NewClient("", hc)
+		case "loyalbooks":
+			src = loyalbooks.NewClient("", hc)
+		case "openlibrary":
+			src = openlibrary.NewClient("", "", hc)
+		default:
+			return resumeFinishedMsg{dlID: dl.ID, title: dl.Title, err: fmt.Errorf("unknown source: %s", dl.Source)}
+		}
+
+		ctx := context.Background()
+		chapters, err := src.GetChapters(ctx, dl.AudiobookID)
+		if err != nil {
+			return resumeFinishedMsg{dlID: dl.ID, title: dl.Title, err: err}
+		}
+
+		mgr := downloader.NewManager(database, cfg.Download.Directory, cfg.Download.MaxConcurrent)
+		err = mgr.ResumeDownload(ctx, dl.ID, chapters, nil)
+		return resumeFinishedMsg{dlID: dl.ID, title: dl.Title, err: err}
 	}
 }
 
