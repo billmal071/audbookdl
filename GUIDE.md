@@ -32,41 +32,78 @@ All content is free and legal (public domain).
 
 ### Prerequisites
 
-- **Go 1.22+** (to build from source)
+- **Go 1.22+** (only if building from source)
 - **mpv** (for the built-in audio player)
 
-Install mpv if you don't have it:
+### Linux
 
 ```bash
-# Ubuntu / Debian
-sudo apt install mpv
+# Install mpv
+sudo apt install mpv          # Ubuntu / Debian
+sudo dnf install mpv          # Fedora
+sudo pacman -S mpv            # Arch
 
-# macOS
-brew install mpv
-
-# Fedora
-sudo dnf install mpv
-
-# Arch
-sudo pacman -S mpv
-```
-
-### Install audbookdl
-
-**Option 1: Download a pre-built binary** from the [latest release](https://github.com/billmal071/audbookdl/releases/latest), then put it somewhere on your PATH:
-
-```bash
+# Install audbookdl (download from https://github.com/billmal071/audbookdl/releases/latest)
 chmod +x audbookdl-linux-amd64
 sudo mv audbookdl-linux-amd64 /usr/local/bin/audbookdl
 ```
 
-**Option 2: Build from source:**
+### macOS
+
+```bash
+# Install mpv
+brew install mpv
+
+# Install audbookdl (download from https://github.com/billmal071/audbookdl/releases/latest)
+chmod +x audbookdl-darwin-arm64    # or audbookdl-darwin-amd64 for Intel Macs
+sudo mv audbookdl-darwin-arm64 /usr/local/bin/audbookdl
+```
+
+### Windows
+
+Windows requires a few extra steps since neither mpv nor audbookdl have automatic installers.
+
+**Step 1: Install mpv** (easiest with a package manager)
+
+```powershell
+# Pick ONE of these — scoop or chocolatey handle PATH for you
+scoop install mpv
+# or
+choco install mpv
+# or
+winget install mpv
+```
+
+If you don't use a package manager, download mpv manually from [mpv.io](https://mpv.io/installation/), extract the zip, and add the folder containing `mpv.exe` to your system PATH (see Step 2).
+
+**Step 2: Install audbookdl**
+
+1. Download `audbookdl-windows-amd64.exe` from the [latest release](https://github.com/billmal071/audbookdl/releases/latest)
+2. Create a folder for it, e.g., `C:\Program Files\audbookdl\`
+3. Move the `.exe` there and rename it to `audbookdl.exe`
+4. Add that folder to your system PATH:
+   - Press `Win + R`, type `sysdm.cpl`, press Enter
+   - Go to **Advanced** tab, click **Environment Variables**
+   - Under **System variables**, find `Path`, click **Edit**
+   - Click **New** and add `C:\Program Files\audbookdl\`
+   - Click **OK** on all dialogs
+5. Open a new terminal (cmd or PowerShell) and verify:
+
+```powershell
+audbookdl version
+```
+
+### Build from source (any platform)
 
 ```bash
 git clone https://github.com/billmal071/audbookdl.git
 cd audbookdl
 make install
 ```
+
+Requires Go 1.22+.
+
+### Verify installation
 
 Verify it's working:
 
