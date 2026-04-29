@@ -18,10 +18,12 @@ type mpvCommand struct {
 }
 
 // mpvResponse is the JSON structure received from mpv's IPC socket.
+// It also covers event messages which have an "event" field instead of request_id.
 type mpvResponse struct {
 	Data      json.RawMessage `json:"data"`
 	RequestID int64           `json:"request_id"`
 	Error     string          `json:"error"`
+	Event     string          `json:"event"`
 }
 
 // mpvResult carries the data and error fields from an mpv IPC response.
@@ -40,6 +42,7 @@ type MpvController struct {
 	responses  map[int64]chan mpvResult
 	respMu     sync.Mutex
 	running    bool
+	onEndFile  func() // called when mpv finishes playing the current file
 }
 
 // NewMpvController returns a new MpvController, or nil if mpv is not on PATH.
@@ -121,7 +124,34 @@ func (m *MpvController) Start(filePath string, positionMS int64) error {
 
 	go m.readResponses()
 
+	// Subscribe to end-file events so we know when playback finishes.
+	m.observeEvent("end-file")
+
 	return nil
+}
+
+// SetOnEndFile registers a callback invoked when mpv finishes playing a file.
+func (m *MpvController) SetOnEndFile(fn func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onEndFile = fn
+}
+
+// observeEvent tells mpv to send us events of the given type.
+func (m *MpvController) observeEvent(name string) {
+	cmd := mpvCommand{
+		Command:   []interface{}{"enable_event", name},
+		RequestID: 0,
+	}
+	data, err := json.Marshal(cmd)
+	if err != nil {
+		return
+	}
+	data = append(data, '\n')
+	if m.conn != nil {
+		m.conn.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
+		m.conn.Write(data)
+	}
 }
 
 // readResponses reads JSON responses from the mpv IPC socket and dispatches
@@ -147,7 +177,16 @@ func (m *MpvController) readResponses() {
 			return
 		}
 
-		// Skip events (they have request_id 0)
+		// Handle events (request_id 0).
+		if resp.Event == "end-file" {
+			m.mu.Lock()
+			fn := m.onEndFile
+			m.mu.Unlock()
+			if fn != nil {
+				go fn()
+			}
+			continue
+		}
 		if resp.RequestID == 0 {
 			continue
 		}

@@ -376,11 +376,37 @@ func (p *Player) startChapterLocked() {
 		_ = p.mpv.Start(ch.FilePath, p.positionMS)
 		_ = p.mpv.SetSpeed(p.speed)
 		_ = p.mpv.SetVolume(p.volume)
+		p.mpv.SetOnEndFile(p.onChapterEnd)
 	} else if p.engine != nil {
 		p.engine.Stop()
 		_ = p.engine.PlayFile(ch.FilePath, p.positionMS)
 	} else {
 		playExternal(ch.FilePath)
+	}
+}
+
+// onChapterEnd is called by mpv when the current file finishes playing.
+// It advances to the next chapter or stops if at the end.
+func (p *Player) onChapterEnd() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.status != StatusPlaying || p.playlist == nil {
+		return
+	}
+
+	last := len(p.playlist.Chapters) - 1
+	if p.chapterIndex < last {
+		p.chapterIndex++
+		p.positionMS = 0
+		p.pausedPosition = 0
+		p.playStartedAt = time.Now()
+		p.startChapterLocked()
+	} else {
+		// End of book — stop playback.
+		p.status = StatusStopped
+		p.stopSaveLoop()
+		p.saveState()
 	}
 }
 
