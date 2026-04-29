@@ -53,6 +53,7 @@ type Player struct {
 	stopChan       chan struct{}
 	engine         *Engine
 	mpv            *MpvController
+	chapterGen     uint64 // incremented on each chapter start to invalidate stale callbacks
 }
 
 // NewPlayer creates a new Player with sensible defaults.
@@ -370,13 +371,17 @@ func (p *Player) GetPlaylist() *Playlist {
 // startChapterLocked starts playing the current chapter. Caller must hold p.mu write lock.
 // Lock ordering: caller holds p.mu; this may acquire mpv.mu. Never acquire mpv.mu before p.mu.
 func (p *Player) startChapterLocked() {
+	p.chapterGen++
 	ch := p.playlist.Chapters[p.chapterIndex]
 	if p.mpv != nil {
 		p.mpv.Stop()
 		_ = p.mpv.Start(ch.FilePath, p.positionMS)
 		_ = p.mpv.SetSpeed(p.speed)
 		_ = p.mpv.SetVolume(p.volume)
-		p.mpv.SetOnEndFile(p.onChapterEnd)
+		gen := p.chapterGen
+		p.mpv.SetOnEndFile(func() {
+			p.onChapterEnd(gen)
+		})
 	} else if p.engine != nil {
 		p.engine.Stop()
 		_ = p.engine.PlayFile(ch.FilePath, p.positionMS)
@@ -387,9 +392,15 @@ func (p *Player) startChapterLocked() {
 
 // onChapterEnd is called by mpv when the current file finishes playing.
 // It advances to the next chapter or stops if at the end.
-func (p *Player) onChapterEnd() {
+// The gen parameter identifies which chapter start this callback belongs to;
+// stale callbacks from a previous chapter are silently discarded.
+func (p *Player) onChapterEnd(gen uint64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	if p.chapterGen != gen {
+		return // stale callback from a previous chapter
+	}
 
 	if p.status != StatusPlaying || p.playlist == nil {
 		return
