@@ -326,11 +326,9 @@ func (m *MpvController) Stop() {
 }
 
 // stopLocked is the internal stop method that assumes the lock is already held.
+// It always attempts to kill the process even if m.running is false, because
+// readResponses may have cleared the flag while the process is still alive.
 func (m *MpvController) stopLocked() {
-	if !m.running {
-		return
-	}
-
 	// Try to send quit command gracefully
 	if m.conn != nil {
 		cmd := mpvCommand{
@@ -351,12 +349,12 @@ func (m *MpvController) stopLocked() {
 		m.conn = nil
 	}
 
-	// Kill process
+	// Kill process — always attempt even if running is false
 	if m.cmd != nil && m.cmd.Process != nil {
 		m.cmd.Process.Kill()
 		m.cmd.Wait()
-		m.cmd = nil
 	}
+	m.cmd = nil
 
 	// Remove socket
 	os.Remove(m.socketPath)
