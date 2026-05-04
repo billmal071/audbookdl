@@ -92,9 +92,29 @@ func (p *Player) Load(playlist *Playlist) {
 
 // Play transitions the player to StatusPlaying, starts the periodic save goroutine,
 // and delegates audio output to the engine or mpv.
+// If the player is resuming from pause (mpv is still running but paused), it sends
+// a resume command instead of restarting the chapter.
 func (p *Player) Play() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	// Resume from pause: mpv is still running, just unpause it.
+	if p.status == StatusPaused && p.mpv != nil && p.mpv.IsRunning() {
+		_ = p.mpv.Resume()
+		p.status = StatusPlaying
+		p.playStartedAt = time.Now()
+		p.startSaveLoop()
+		return
+	}
+
+	// Resume from pause via engine.
+	if p.status == StatusPaused && p.engine != nil && p.engine.IsPlaying() {
+		p.engine.PauseResume()
+		p.status = StatusPlaying
+		p.playStartedAt = time.Now()
+		p.startSaveLoop()
+		return
+	}
 
 	p.status = StatusPlaying
 	p.playStartedAt = time.Now()
@@ -132,6 +152,7 @@ func (p *Player) Pause() {
 	}
 	p.pausedPosition = p.positionMS
 	p.status = StatusPaused
+	p.saveState()
 }
 
 // Stop halts playback, stops the save ticker, persists the final state, and
